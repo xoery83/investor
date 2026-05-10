@@ -148,6 +148,14 @@
   .dashboard-value-tick {
     animation: dashboard-value-tick 0.45s ease-out;
   }
+
+  .research-fade-in {
+    animation: research-fade-in 0.42s ease-out both;
+  }
+
+  .terminal-research-pulse {
+    animation: terminal-research-pulse 1.6s ease-in-out infinite;
+  }
 }
 
 @keyframes dashboard-value-tick {
@@ -156,5 +164,28 @@
   }
   100% {
     opacity: 1;
+  }
+}
+
+@keyframes research-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes terminal-research-pulse {
+  0% {
+    border-color: oklch(1 0 0 / 8%);
+  }
+  50% {
+    border-color: oklch(0.78 0.11 230 / 32%);
+  }
+  100% {
+    border-color: oklch(1 0 0 / 8%);
   }
 }

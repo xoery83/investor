@@ -1,5 +1,5 @@
 "use client"
-
+import { useEffect, useState } from "react"
 import {
   Activity,
   ArrowUpRight,
@@ -29,22 +29,50 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useAgentFeed } from "@/hooks/use-agent-feed"
-import { useLiveHoldings } from "@/hooks/use-live-holdings"
+
 import { useLivePerformanceSeries } from "@/hooks/use-live-performance"
 import { useLivePortfolio } from "@/hooks/use-live-portfolio"
 import { formatUsd } from "@/lib/dashboard/format"
 import { cn } from "@/lib/utils"
-
+type DbHolding = {
+  id: string
+  ticker: string
+  asset_type: string
+  weight: number
+  quantity: number
+  avg_cost: number
+  current_price: number
+  market_value: number
+}
 export default function DashboardPage() {
+  const [mounted, setMounted] = useState(false)
+
+useEffect(() => {
+  setMounted(true)
+}, [])
+
+
   const portfolio = useLivePortfolio()
   const { series, ready: chartReady } = useLivePerformanceSeries(portfolio.value)
-  const holdings = useLiveHoldings(portfolio.tick)
+  const [holdings, setHoldings] = useState<DbHolding[]>([])
+
+  useEffect(() => {
+    async function loadHoldings() {
+      const res = await fetch("/api/portfolio")
+      const json = await res.json()
+      setHoldings(json.data || [])
+    }
+  
+    loadHoldings()
+  }, [])
   const { activities } = useAgentFeed()
 
   const firstSeries = series[0]?.value ?? portfolio.value
   const periodReturnPct = ((portfolio.value - firstSeries) / firstSeries) * 100
   const dayUp = portfolio.dayChange >= 0
-
+  if (!mounted) {
+    return null
+  }
   return (
     <div className="relative min-h-full overflow-hidden">
       <div
@@ -196,7 +224,9 @@ export default function DashboardPage() {
                 </div>
               </CardHeader>
               <CardContent className="pt-4">
+              <div className="h-[260px] min-h-[260px] w-full min-w-0">
                 <PerformanceChart data={series} ready={chartReady} />
+              </div>
               </CardContent>
             </Card>
 
@@ -225,33 +255,33 @@ export default function DashboardPage() {
                   <TableBody>
                     {holdings.map((row) => (
                       <TableRow
-                        key={row.symbol}
+                        key={row.id}
                         className="border-border/40 transition-colors duration-200 hover:bg-muted/30"
                       >
-                        <TableCell className="pl-4 font-medium">{row.symbol}</TableCell>
+                        <TableCell className="pl-4 font-medium">{row.ticker}</TableCell>
                         <TableCell className="hidden max-w-[180px] truncate md:table-cell text-muted-foreground">
-                          {row.name}
+                          {row.asset_type}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {row.shares}
+                          {row.quantity}
                         </TableCell>
                         <TableCell className="hidden text-right tabular-nums sm:table-cell text-muted-foreground">
-                          ${row.avgCost.toFixed(1)}
+                          ${row.avg_cost.toFixed(1)}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          ${row.price.toFixed(2)}
+                          ${row.current_price.toFixed(2)}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {formatUsd(row.value)}
+                          {formatUsd(row.market_value)}
                         </TableCell>
                         <TableCell
                           className={cn(
                             "pr-4 text-right tabular-nums font-medium transition-colors duration-200",
-                            row.dayPct >= 0 ? "text-emerald-400" : "text-rose-400"
+                            0 >= 0 ? "text-emerald-400" : "text-rose-400"
                           )}
                         >
-                          {row.dayPct >= 0 ? "+" : ""}
-                          {row.dayPct.toFixed(2)}%
+                          {0 >= 0 ? "+" : ""}
+                          0.00%
                         </TableCell>
                       </TableRow>
                     ))}
