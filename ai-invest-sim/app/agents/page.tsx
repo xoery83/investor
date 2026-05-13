@@ -1,9 +1,12 @@
 import Link from "next/link"
 
 async function getAgents() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/agents`, {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+
+  const res = await fetch(`${baseUrl}/api/agents`, {
     cache: "no-store",
   })
+  
 
   if (!res.ok) {
     return []

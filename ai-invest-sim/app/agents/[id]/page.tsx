@@ -3,7 +3,9 @@ import RunAgentButton from "./RunAgentButton"
 import AddHoldingForm from "./AddHoldingForm"
 
 async function getAgent(id: string) {
-  const res = await fetch(`http://localhost:3000/api/agents/${id}`, {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+
+  const res = await fetch(`${baseUrl}/api/agents/${id}`, {
     cache: "no-store",
   })
 
