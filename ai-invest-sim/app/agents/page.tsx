@@ -8,8 +8,6 @@ async function getAgents() {
   })
   
 
-  
-
   if (!res.ok) {
     return []
   }
