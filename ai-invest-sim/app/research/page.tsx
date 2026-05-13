@@ -70,27 +70,6 @@ export default function ResearchPage() {
 
     try {
       const response = await fetch("/api/generate-research", { method: "POST" })
-      // #region debug log H4_ui_insertion
-      fetch(
-        "http://127.0.0.1:7785/ingest/c2c93887-1802-43ba-8833-2a1cda82fab7",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "9a0820",
-          },
-          body: JSON.stringify({
-            sessionId: "9a0820",
-            runId: "pre_prompt_fix",
-            hypothesisId: "H4_ui_insertion_response",
-            location: "app/research/page.tsx:handleGenerate:after_fetch",
-            message: "Client received /api/generate-research response",
-            data: { ok: response.ok, status: response.status },
-            timestamp: Date.now(),
-          }),
-        }
-      ).catch(() => {})
-      // #endregion
 
       const payload = (await response.json()) as GeneratedBrief | { error?: string }
 

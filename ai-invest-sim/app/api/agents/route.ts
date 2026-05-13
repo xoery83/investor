@@ -70,7 +70,6 @@ export async function POST(request: Request) {
     agent_id: data.id,
     total_value: initial_capital,
     cash_value: initial_capital,
-    cash_balance: initial_capital,
     holdings_value: 0,
     daily_return: 0,
     cumulative_return: 0,

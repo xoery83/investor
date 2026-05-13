@@ -106,7 +106,7 @@ export default function AgentSettingsPage() {
 
         <h1 className="text-3xl font-bold mb-2">Agent Settings</h1>
         <p className="text-slate-400 mb-8">
-          Modify this agent's philosophy, risk parameters, model, and running status.
+          Modify this agent&apos;s philosophy, risk parameters, model, and running status.
         </p>
 
         <form

@@ -53,6 +53,8 @@ export type AgentHolding = {
   market_value: number
 
   weight: number
+
+  updated_at?: string
 }
 
 export type AgentRun = {

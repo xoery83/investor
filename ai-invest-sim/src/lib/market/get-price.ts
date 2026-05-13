@@ -6,6 +6,7 @@ export type MarketQuote = {
   symbol: string
   name: string
   price: number
+  priceSource: "pre" | "regular" | "post"
   currency: string
   exchange: string
   marketState: string
@@ -16,29 +17,64 @@ export async function getPrice(
   symbol: string
 ): Promise<MarketQuote> {
   try {
-    const quote: any = await yahooFinance.quote(symbol)
+    const quote = (await yahooFinance.quote(symbol)) as Record<string, unknown>
+    const fallbackSymbol = symbol.toUpperCase()
+    const marketState = readString(quote.marketState, "UNKNOWN")
+    const selectedPrice = selectDisplayPrice(quote, marketState)
 
     return {
-      symbol: quote.symbol || symbol.toUpperCase(),
+      symbol: readString(quote.symbol, fallbackSymbol),
 
       name:
-        quote.longName ||
-        quote.shortName ||
-        symbol.toUpperCase(),
+        readString(quote.longName) ||
+        readString(quote.shortName) ||
+        fallbackSymbol,
 
-      price: Number(quote.regularMarketPrice || 0),
+      price: selectedPrice.price,
 
-      currency: quote.currency || "USD",
+      priceSource: selectedPrice.source,
 
-      exchange: quote.fullExchangeName || "Unknown",
+      currency: readString(quote.currency, "USD"),
 
-      marketState: quote.marketState || "UNKNOWN",
+      exchange: readString(quote.fullExchangeName, "Unknown"),
 
-      assetType: quote.quoteType || "equity",
+      marketState,
+
+      assetType: readString(quote.quoteType, "equity"),
     }
   } catch (error) {
     console.error("Failed to fetch market price:", error)
 
     throw new Error(`Failed to fetch quote for ${symbol}`)
   }
+}
+
+function readString(value: unknown, fallback = "") {
+  return typeof value === "string" && value.length > 0 ? value : fallback
+}
+
+function readNumber(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function selectDisplayPrice(
+  quote: Record<string, unknown>,
+  marketState: string
+): { price: number; source: MarketQuote["priceSource"] } {
+  const preMarketPrice = readNumber(quote.preMarketPrice)
+  const postMarketPrice = readNumber(quote.postMarketPrice)
+  const regularMarketPrice = readNumber(quote.regularMarketPrice)
+
+  if (marketState === "PRE" && preMarketPrice > 0) {
+    return { price: preMarketPrice, source: "pre" }
+  }
+
+  if (
+    (marketState === "POST" || marketState === "POSTPOST") &&
+    postMarketPrice > 0
+  ) {
+    return { price: postMarketPrice, source: "post" }
+  }
+
+  return { price: regularMarketPrice, source: "regular" }
 }

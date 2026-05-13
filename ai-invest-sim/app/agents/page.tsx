@@ -1,7 +1,9 @@
 import Link from "next/link"
 import { headers } from "next/headers"
 
-async function getAgents() {
+import type { Agent } from "../../src/lib/types/agent"
+
+async function getAgents(): Promise<Agent[]> {
   const headersList = await headers()
   const host = headersList.get("host")
   const protocol = process.env.NODE_ENV === "production" ? "https" : "http"
@@ -14,7 +16,7 @@ async function getAgents() {
     return []
   }
 
-  const data = await res.json()
+  const data = (await res.json()) as { agents?: Agent[] }
   return data.agents || []
 }
 
@@ -52,7 +54,7 @@ export default async function AgentsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {agents.map((agent: any) => (
+            {agents.map((agent) => (
               <Link
                 key={agent.id}
                 href={`/agents/${agent.id}`}

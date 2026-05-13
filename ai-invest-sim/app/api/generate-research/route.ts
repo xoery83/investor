@@ -15,11 +15,6 @@ const HOLDINGS = ["NVDA", "MSFT", "COST", "VGT", "GLD"] as const
 const DEFAULT_DISCLAIMER =
   "Simulated educational output only. Not financial advice."
 
-const DEBUG_ENDPOINT =
-  "http://127.0.0.1:7785/ingest/c2c93887-1802-43ba-8833-2a1cda82fab7"
-const DEBUG_SESSION_ID = "9a0820"
-const DEBUG_RUN_ID = "pre_prompt_fix"
-
 function validatePayload(data: unknown): data is ResearchPayload {
   if (!data || typeof data !== "object") return false
   const record = data as Record<string, unknown>
@@ -35,25 +30,6 @@ function validatePayload(data: unknown): data is ResearchPayload {
 
 export async function POST() {
   const apiKey = process.env.OPENAI_API_KEY
-
-  // #region debug log H1
-  fetch(DEBUG_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": DEBUG_SESSION_ID,
-    },
-    body: JSON.stringify({
-      sessionId: DEBUG_SESSION_ID,
-      runId: DEBUG_RUN_ID,
-      hypothesisId: "H1_apiKey_and_request",
-      location: "app/api/generate-research/route.ts:POST:start",
-      message: "POST /api/generate-research invoked",
-      data: { hasApiKey: Boolean(apiKey) },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-  // #endregion
 
   if (!apiKey) {
     return NextResponse.json(
@@ -95,25 +71,6 @@ Hard constraints:
 disclaimer must be: "${DEFAULT_DISCLAIMER}"`;
 
   try {
-    // #region debug log H3
-    fetch(DEBUG_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": DEBUG_SESSION_ID,
-      },
-      body: JSON.stringify({
-        sessionId: DEBUG_SESSION_ID,
-        runId: DEBUG_RUN_ID,
-        hypothesisId: "H3_openai_call_before",
-        location: "app/api/generate-research/route.ts:POST:before_openai",
-        message: "Calling OpenAI chat.completions.create",
-        data: { model: MODEL, temperature: 0.3, holdings: [...HOLDINGS] },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
-
     const completion = await openai.chat.completions.create({
       model: MODEL,
       temperature: 0.3,
@@ -126,28 +83,6 @@ disclaimer must be: "${DEFAULT_DISCLAIMER}"`;
 
     const raw = completion.choices[0]?.message?.content
 
-    // #region debug log H3
-    fetch(DEBUG_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": DEBUG_SESSION_ID,
-      },
-      body: JSON.stringify({
-        sessionId: DEBUG_SESSION_ID,
-        runId: DEBUG_RUN_ID,
-        hypothesisId: "H3_openai_call_after",
-        location: "app/api/generate-research/route.ts:POST:after_openai",
-        message: "OpenAI returned response",
-        data: {
-          hasRaw: Boolean(raw),
-          usage: completion.usage ? completion.usage : null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
-
     if (!raw) {
       return NextResponse.json(
         { error: "Model returned an empty response." },
@@ -156,35 +91,6 @@ disclaimer must be: "${DEFAULT_DISCLAIMER}"`;
     }
 
     const parsed: unknown = JSON.parse(raw)
-
-    // #region debug log H2
-    fetch(DEBUG_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": DEBUG_SESSION_ID,
-      },
-      body: JSON.stringify({
-        sessionId: DEBUG_SESSION_ID,
-        runId: DEBUG_RUN_ID,
-        hypothesisId: "H2_validation_result",
-        location: "app/api/generate-research/route.ts:POST:after_parse",
-        message: "Parsed JSON; validating payload",
-        data: {
-          validate: validatePayload(parsed),
-          previewTitle:
-            typeof (parsed as any)?.title === "string"
-              ? String((parsed as any).title).slice(0, 60)
-              : null,
-          previewSummary:
-            typeof (parsed as any)?.summary === "string"
-              ? String((parsed as any).summary).slice(0, 90)
-              : null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
 
     if (!validatePayload(parsed)) {
       return NextResponse.json(

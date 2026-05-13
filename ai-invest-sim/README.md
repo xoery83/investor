@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Investment Simulator
 
-## Getting Started
+AI Investment Simulator is an AI-native portfolio simulation platform. Users can create investment agents, define their philosophy and risk profile, attach simulated holdings, run AI-generated portfolio reviews, and track portfolio state over time.
 
-First, run the development server:
+This product is a simulation and education tool. It does not provide financial advice or execute real brokerage trades.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Stack
+
+- Next.js 16 App Router
+- React 19
+- TypeScript
+- Supabase for database-backed portfolio state
+- OpenAI API for agent recommendations and research briefs
+- Yahoo Finance for quote lookup
+- Tailwind CSS and shadcn UI primitives
+
+## Product Direction
+
+The current architecture is moving toward:
+
+```text
+Agent
+-> owns portfolio
+-> owns memory and state
+-> runs on demand, later on schedule
+-> generates rebalance recommendations
+-> stores run history and valuation snapshots
+-> tracks performance over time
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Longer term, the platform can support public agents, rankings, follow/copy workflows, subscriptions, and eventual brokerage integrations.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Implemented
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Agent list, create flow, detail dashboard, and settings page
+- Agent holdings with cash balance checks and portfolio weight recalculation
+- Manual agent runs stored in `agent_runs`
+- Dynamic prompt construction in `src/lib/agents/build-agent-prompt.ts`
+- OpenAI-powered agent recommendations in `src/lib/agents/run-agent.ts`
+- Yahoo Finance quote lookup in `src/lib/market/get-price.ts`
+- Research brief generation in `app/api/generate-research/route.ts`
+- Dashboard, portfolio, strategy, research, and settings sections
 
-## Learn More
+## Environment
 
-To learn more about Next.js, take a look at the following resources:
+Create `.env.local` with:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+OPENAI_API_KEY=...
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Development
 
-## Deploy on Vercel
+```bash
+npm install
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Open `http://localhost:3000`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Quality Checks
+
+```bash
+npm run lint
+npm run build
+```
+
+The production build uses Next.js/Turbopack. In restricted local sandboxes, Turbopack may need permission to bind its helper process port.
+
+## Database
+
+The app expects these Supabase tables:
+
+- `agents`
+- `agent_holdings`
+- `agent_runs`
+- `agent_valuations`
+
+See `docs/supabase-schema.sql` for the current schema baseline.
+
+## Architecture Notes
+
+See `docs/architecture.md` for module boundaries, near-term priorities, and rules for keeping portfolio state database-backed.
