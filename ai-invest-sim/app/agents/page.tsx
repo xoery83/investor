@@ -1,12 +1,14 @@
 import Link from "next/link"
+import { headers } from "next/headers"
 
 async function getAgents() {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+  const headersList = await headers()
+  const host = headersList.get("host")
+  const protocol = process.env.NODE_ENV === "production" ? "https" : "http"
 
-  const res = await fetch(`${baseUrl}/api/agents`, {
+  const res = await fetch(`${protocol}://${host}/api/agents`, {
     cache: "no-store",
   })
-  
 
   if (!res.ok) {
     return []

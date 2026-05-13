@@ -2,12 +2,23 @@ import Link from "next/link"
 import RunAgentButton from "./RunAgentButton"
 import AddHoldingForm from "./AddHoldingForm"
 
-async function getAgent(id: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+import { headers } from "next/headers"
 
-  const res = await fetch(`${baseUrl}/api/agents/${id}`, {
-    cache: "no-store",
-  })
+async function getAgent(id: string) {
+  const headersList = await headers()
+  const host = headersList.get("host")
+
+  const protocol =
+    process.env.NODE_ENV === "production"
+      ? "https"
+      : "http"
+
+  const res = await fetch(
+    `${protocol}://${host}/api/agents/${id}`,
+    {
+      cache: "no-store",
+    }
+  )
 
   if (!res.ok) {
     return null
