@@ -10,9 +10,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { formatAgentTimestamp } from "@/lib/dashboard/agent-utils"
-import type { AgentActivity, AgentStatus } from "@/lib/dashboard/types"
-import { cn } from "@/lib/utils"
+import { formatAgentTimestamp } from "../../../lib/dashboard/agent-utils"
+import type { AgentActivity, AgentStatus } from "../../../lib/dashboard/types"
+import { cn } from "../../../lib/utils"
 
 function StatusPill({ status }: { status: AgentStatus }) {
   const styles: Record<

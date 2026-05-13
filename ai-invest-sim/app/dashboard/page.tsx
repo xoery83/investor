@@ -32,8 +32,8 @@ import { useAgentFeed } from "@/hooks/use-agent-feed"
 
 import { useLivePerformanceSeries } from "@/hooks/use-live-performance"
 import { useLivePortfolio } from "@/hooks/use-live-portfolio"
-import { formatUsd } from "@/lib/dashboard/format"
-import { cn } from "@/lib/utils"
+import { formatUsd } from "../../lib/dashboard/format"
+import { cn } from "../../lib/utils"
 type DbHolding = {
   id: string
   ticker: string

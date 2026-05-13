@@ -1,70 +1,96 @@
-import { Bot, ShieldCheck, Sparkles, UserRound } from "lucide-react"
+import Link from "next/link"
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+async function getAgents() {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/agents`, {
+    cache: "no-store",
+  })
 
-const officialAgents = [
-  { name: "Macro Sentinel", focus: "Rates, inflation, and policy shifts", mode: "RUNNING" },
-  { name: "Earnings Radar", focus: "Guidance drift and transcript sentiment", mode: "ANALYZING" },
-  { name: "Risk Monitor", focus: "Factor concentration and drawdown alerts", mode: "DONE" },
-]
+  if (!res.ok) {
+    return []
+  }
 
-const creatorAgents = [
-  { name: "Growth Rotator", owner: "Quant Lab", style: "Momentum + quality blend" },
-  { name: "Dividend Guard", owner: "Income Desk", style: "Yield stability screens" },
-  { name: "Event Decoder", owner: "Creator: Nova", style: "Catalyst and event workflows" },
-]
+  const data = await res.json()
+  return data.agents || []
+}
 
-export default function AgentsPage() {
+export default async function AgentsPage() {
+  const agents = await getAgents()
+
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-8 sm:px-6 lg:px-10">
-      <div className="mb-6">
-        <p className="font-mono text-[11px] tracking-widest text-muted-foreground uppercase">Invest / Agents</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">AI Portfolio Agents</h1>
+    <main className="min-h-screen bg-slate-950 text-white p-8">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-bold">Investment Agents</h1>
+            <p className="text-slate-400 mt-2">
+              Create, monitor, and manage your AI investment agents.
+            </p>
+          </div>
+
+          <Link
+            href="/agents/new"
+            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg"
+          >
+            Create Agent
+          </Link>
+        </div>
+
+        {agents.length === 0 ? (
+          <div className="border border-slate-800 rounded-xl p-8 text-center">
+            <p className="text-slate-400">No agents yet.</p>
+            <Link
+              href="/agents/new"
+              className="inline-block mt-4 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg"
+            >
+              Create your first Agent
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {agents.map((agent: any) => (
+              <Link
+                key={agent.id}
+                href={`/agents/${agent.id}`}
+                className="border border-slate-800 rounded-xl p-6 hover:border-blue-500 transition"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold">{agent.name}</h2>
+                  <span
+                    className={`text-xs px-2 py-1 rounded ${
+                      agent.is_active
+                        ? "bg-green-900 text-green-300"
+                        : "bg-slate-800 text-slate-400"
+                    }`}
+                  >
+                    {agent.is_active ? "Active" : "Paused"}
+                  </span>
+                </div>
+
+                <p className="text-slate-400 text-sm mb-4">
+                  {agent.description || "No description"}
+                </p>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Value</span>
+                    <span>${Number(agent.current_value).toLocaleString()}</span>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Risk</span>
+                    <span>{agent.risk_level}</span>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Frequency</span>
+                    <span>{agent.rebalance_frequency}</span>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
-
-      <section className="mb-6 grid gap-4 lg:grid-cols-3">
-        {officialAgents.map((agent) => (
-          <Card key={agent.name} className="border-border/60 bg-card/55 backdrop-blur-md">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ShieldCheck className="size-4 text-primary" />
-                {agent.name}
-              </CardTitle>
-              <CardDescription>{agent.focus}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <span className="rounded-md border border-border/70 bg-muted/40 px-2 py-1 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
-                {agent.mode}
-              </span>
-            </CardContent>
-          </Card>
-        ))}
-      </section>
-
-      <Card className="border-border/60 bg-card/55 backdrop-blur-md">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Sparkles className="size-4 text-primary" />
-            Creator Agents
-          </CardTitle>
-          <CardDescription>Community-built models for specific alpha and risk objectives.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-3">
-          {creatorAgents.map((agent) => (
-            <div key={agent.name} className="rounded-xl border border-border/60 bg-muted/25 p-4">
-              <p className="flex items-center gap-2 font-medium">
-                <Bot className="size-4 text-primary" />
-                {agent.name}
-              </p>
-              <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <UserRound className="size-3.5" />
-                {agent.owner}
-              </p>
-              <p className="mt-2 text-xs text-muted-foreground">{agent.style}</p>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
+    </main>
   )
 }

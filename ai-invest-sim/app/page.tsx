@@ -1,8 +1,8 @@
 import Link from "next/link"
 import { ArrowRight, Bot, ChartSpline, Sparkles } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "../components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card"
 
 const quickStats = [
   { label: "Simulated AUM", value: "$2.84M", detail: "+1.9% this week" },
