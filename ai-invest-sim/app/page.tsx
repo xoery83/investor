@@ -1,98 +1,238 @@
+"use client"
+
+import type { ReactNode } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { ArrowRight, Bot, ChartSpline, Sparkles } from "lucide-react"
+import { ArrowRight, Bot, BriefcaseBusiness, ChartSpline, Sparkles } from "lucide-react"
 
 import { Button } from "../components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card"
+import { supabase } from "../src/lib/supabase"
 
-const quickStats = [
-  { label: "Simulated AUM", value: "$2.84M", detail: "+1.9% this week" },
-  { label: "Active Agents", value: "17", detail: "5 running now" },
-  { label: "Research Briefs", value: "42", detail: "9 pending review" },
-]
+type AgentListItem = {
+  id: string
+  name: string
+  visibility: string
+  lifecycle_status: string
+  current_value: number
+  is_following?: boolean
+}
 
-const modules = [
-  { name: "Agents", href: "/agents", desc: "Official and custom investment agents." },
-  { name: "Strategies", href: "/strategies", desc: "Risk-aware model portfolios and style blends." },
-  { name: "Portfolio", href: "/portfolio", desc: "Live holdings, allocation drift, rebalance proposals." },
-  { name: "Research", href: "/research", desc: "AI-generated macro, sector, and earnings briefs." },
-]
+type PortfolioSummary = {
+  cash_balance: number
+  positions_value: number
+  total_value: number
+}
 
 export default function Home() {
+  const [agents, setAgents] = useState<AgentListItem[]>([])
+  const [summary, setSummary] = useState<PortfolioSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadDashboard() {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {}
+
+      const [agentsRes, portfolioRes] = await Promise.all([
+        fetch("/api/agents", { headers, cache: "no-store" }),
+        token
+          ? fetch("/api/user/portfolio", { headers, cache: "no-store" })
+          : Promise.resolve(null),
+      ])
+      const agentsPayload = await agentsRes.json()
+      const portfolioPayload = portfolioRes ? await portfolioRes.json() : null
+
+      if (cancelled) return
+
+      if (agentsPayload.success) {
+        setAgents(agentsPayload.agents || [])
+      }
+      if (portfolioPayload?.success) {
+        setSummary(portfolioPayload.summary)
+      }
+      setLoading(false)
+    }
+
+    loadDashboard()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const activeAgents = agents.filter(
+    (agent) => agent.lifecycle_status === "active"
+  )
+  const followedAgents = agents.filter((agent) => agent.is_following)
+  const systemAgents = agents.filter(
+    (agent) => agent.visibility === "system" || agent.visibility === "public"
+  )
+
   return (
     <div className="relative min-h-full overflow-hidden">
       <div className="relative mx-auto w-full max-w-7xl px-4 pb-16 pt-8 sm:px-6 lg:px-10">
-        <section className="mb-8 grid gap-4 md:grid-cols-3">
-          {quickStats.map((item) => (
-            <Card key={item.label} className="border-border/60 bg-card/50 backdrop-blur-md">
-              <CardHeader>
-                <CardDescription className="font-mono text-[11px] uppercase tracking-wider">
-                  {item.label}
-                </CardDescription>
-                <CardTitle className="text-2xl tabular-nums">{item.value}</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0 text-xs text-muted-foreground">{item.detail}</CardContent>
-            </Card>
-          ))}
+        <div className="mb-6">
+          <p className="font-mono text-[11px] tracking-widest text-muted-foreground uppercase">
+            Overview / Dashboard
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
+            AI Investment Operating System
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+            A live workspace for agents, follow relationships, and your simulated Agent ETF portfolio.
+          </p>
+        </div>
+
+        <section className="mb-8 grid gap-4 md:grid-cols-4">
+          <MetricCard
+            label="Visible Agents"
+            value={loading ? "..." : String(agents.length)}
+            detail={`${activeAgents.length} active`}
+          />
+          <MetricCard
+            label="Public/System Agents"
+            value={loading ? "..." : String(systemAgents.length)}
+            detail="Available to discover"
+          />
+          <MetricCard
+            label="Following"
+            value={loading ? "..." : String(followedAgents.length)}
+            detail="Agents tracked by you"
+          />
+          <MetricCard
+            label="Portfolio NAV"
+            value={summary ? formatCurrency(summary.total_value) : "--"}
+            detail={
+              summary
+                ? `${formatCurrency(summary.cash_balance)} cash`
+                : "Log in to initialize"
+            }
+          />
         </section>
 
         <Card className="mb-8 border-border/60 bg-card/55 shadow-xl shadow-black/20 backdrop-blur-md">
           <CardHeader>
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[10px] tracking-wider text-primary uppercase">
               <Sparkles className="size-3" />
-              Platform Overview
+              Next Actions
             </div>
-            <CardTitle className="mt-2 text-3xl tracking-tight sm:text-4xl">
-              AI Investment Operating System
+            <CardTitle className="mt-2 text-2xl tracking-tight">
+              Build, follow, and simulate agent portfolios
             </CardTitle>
             <CardDescription className="max-w-3xl text-sm leading-relaxed">
-              A multi-section SaaS shell for simulated investment operations. Track live portfolio behavior,
-              deploy strategy agents, and review AI-generated market intelligence in one workspace.
+              Create private agents, discover public/system agents, follow them, and allocate simulated cash into Agent ETF positions.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">
             <Button asChild>
-              <Link href="/dashboard" className="gap-1.5">
-                Open Dashboard
+              <Link href="/agents" className="gap-1.5">
+                Browse Agents
                 <ArrowRight className="size-3.5" />
               </Link>
             </Button>
             <Button asChild variant="outline">
-              <Link href="/research">View Research</Link>
+              <Link href="/portfolio">Open Portfolio</Link>
             </Button>
           </CardContent>
         </Card>
 
         <section className="grid gap-4 md:grid-cols-2">
-          {modules.map((module) => (
-            <Card
-              key={module.name}
-              className="group border-border/60 bg-card/50 transition-colors hover:bg-card/65"
-            >
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  {module.name === "Agents" ? (
-                    <Bot className="size-4 text-primary" />
-                  ) : module.name === "Strategies" ? (
-                    <ChartSpline className="size-4 text-primary" />
-                  ) : (
-                    <Sparkles className="size-4 text-primary" />
-                  )}
-                  {module.name}
-                </CardTitle>
-                <CardDescription>{module.desc}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild variant="ghost" size="sm" className="px-0 text-primary hover:bg-transparent">
-                  <Link href={module.href} className="gap-1.5">
-                    Open
-                    <ArrowRight className="size-3.5" />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
+          <ModuleCard
+            icon={<Bot className="size-4 text-primary" />}
+            name="Agents"
+            href="/agents"
+            desc="Create, manage, follow, and run investment agents."
+          />
+          <ModuleCard
+            icon={<BriefcaseBusiness className="size-4 text-primary" />}
+            name="Portfolio"
+            href="/portfolio"
+            desc="Track your simulated Agent ETF cash and positions."
+          />
+          <ModuleCard
+            icon={<Sparkles className="size-4 text-primary" />}
+            name="Research"
+            href="/research"
+            desc="Review recent daily, weekly, and escalation runs."
+          />
+          <ModuleCard
+            icon={<ChartSpline className="size-4 text-primary" />}
+            name="Strategies"
+            href="/strategies"
+            desc="Use live agents as the current strategy catalog."
+          />
         </section>
       </div>
     </div>
   )
+}
+
+function MetricCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string
+  detail: string
+}) {
+  return (
+    <Card className="border-border/60 bg-card/50 backdrop-blur-md">
+      <CardHeader>
+        <CardDescription className="font-mono text-[11px] uppercase tracking-wider">
+          {label}
+        </CardDescription>
+        <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 text-xs text-muted-foreground">
+        {detail}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ModuleCard({
+  icon,
+  name,
+  href,
+  desc,
+}: {
+  icon: ReactNode
+  name: string
+  href: string
+  desc: string
+}) {
+  return (
+    <Card className="group border-border/60 bg-card/50 transition-colors hover:bg-card/65">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          {icon}
+          {name}
+        </CardTitle>
+        <CardDescription>{desc}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button asChild variant="ghost" size="sm" className="px-0 text-primary hover:bg-transparent">
+          <Link href={href} className="gap-1.5">
+            Open
+            <ArrowRight className="size-3.5" />
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0))
 }
