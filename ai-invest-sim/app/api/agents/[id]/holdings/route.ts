@@ -14,6 +14,7 @@ export async function POST(
   const body = await request.json()
 
   const {
+    action,
     symbol,
     asset_name,
     asset_type,
@@ -25,6 +26,8 @@ export async function POST(
   const numericQuantity = Number(quantity)
   const numericAverageCost = Number(average_cost || 0)
   const numericCurrentPrice = Number(current_price)
+  const tradeAction = action === "sell" ? "sell" : "buy"
+  const normalizedSymbol = String(symbol || "").toUpperCase()
 
   if (!symbol || numericQuantity <= 0 || numericCurrentPrice <= 0) {
     return NextResponse.json(
@@ -52,33 +55,160 @@ export async function POST(
   const marketValue = numericQuantity * numericCurrentPrice
   const currentCash = Number(agent.cash_balance || 0)
 
-  if (marketValue > currentCash) {
+  if (tradeAction === "buy" && marketValue > currentCash) {
     return NextResponse.json(
       {
         success: false,
-        error: "Not enough cash balance to add this holding.",
+        error: "Not enough cash balance to buy this holding.",
       },
       { status: 400 }
     )
   }
 
-  const newCashBalance = currentCash - marketValue
-
-  const { data: newHolding, error: holdingError } = await supabase
+  const { data: existingHoldings, error: existingHoldingsError } = await supabase
     .from("agent_holdings")
-    .insert({
-      agent_id: id,
-      symbol: String(symbol).toUpperCase(),
-      asset_name,
-      asset_type: asset_type || "stock",
-      quantity: numericQuantity,
-      average_cost: numericAverageCost,
-      current_price: numericCurrentPrice,
-      market_value: marketValue,
-      weight: 0,
-    })
-    .select()
-    .single()
+    .select("*")
+    .eq("agent_id", id)
+    .eq("symbol", normalizedSymbol)
+    .order("updated_at", { ascending: false })
+
+  if (existingHoldingsError) {
+    return NextResponse.json(
+      { success: false, error: existingHoldingsError.message },
+      { status: 500 }
+    )
+  }
+
+  const existingQuantity = (existingHoldings || []).reduce(
+    (sum, holding) => sum + Number(holding.quantity || 0),
+    0
+  )
+  const existingCostBasis = (existingHoldings || []).reduce(
+    (sum, holding) =>
+      sum + Number(holding.quantity || 0) * Number(holding.average_cost || 0),
+    0
+  )
+  let newCashBalance = currentCash
+  let changedHolding = null
+  let holdingError = null
+
+  if (tradeAction === "sell") {
+    if (existingQuantity <= 0) {
+      return NextResponse.json(
+        { success: false, error: "No existing holding found for this symbol." },
+        { status: 400 }
+      )
+    }
+
+    if (numericQuantity > existingQuantity) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Cannot sell ${numericQuantity} shares. Current position is ${existingQuantity} shares.`,
+        },
+        { status: 400 }
+      )
+    }
+
+    const remainingQuantity = existingQuantity - numericQuantity
+    newCashBalance = currentCash + marketValue
+
+    if (remainingQuantity <= 0.0000001) {
+      const { error } = await supabase
+        .from("agent_holdings")
+        .delete()
+        .eq("agent_id", id)
+        .eq("symbol", normalizedSymbol)
+      holdingError = error
+    } else {
+      const primaryHolding = existingHoldings?.[0]
+      const { data, error } = await supabase
+        .from("agent_holdings")
+        .update({
+          asset_name: asset_name || primaryHolding?.asset_name,
+          asset_type: asset_type || primaryHolding?.asset_type || "stock",
+          quantity: remainingQuantity,
+          average_cost:
+            existingQuantity > 0
+              ? existingCostBasis / existingQuantity
+              : numericAverageCost,
+          current_price: numericCurrentPrice,
+          market_value: remainingQuantity * numericCurrentPrice,
+          weight: 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", primaryHolding.id)
+        .select()
+        .single()
+
+      changedHolding = data
+      holdingError = error
+
+      const duplicateIds = (existingHoldings || [])
+        .slice(1)
+        .map((holding) => holding.id)
+
+      if (duplicateIds.length > 0) {
+        await supabase.from("agent_holdings").delete().in("id", duplicateIds)
+      }
+    }
+  } else {
+    newCashBalance = currentCash - marketValue
+
+    if ((existingHoldings || []).length > 0) {
+      const primaryHolding = existingHoldings?.[0]
+      const newQuantity = existingQuantity + numericQuantity
+      const tradeCost = numericQuantity * (numericAverageCost || numericCurrentPrice)
+      const newAverageCost =
+        newQuantity > 0 ? (existingCostBasis + tradeCost) / newQuantity : 0
+
+      const { data, error } = await supabase
+        .from("agent_holdings")
+        .update({
+          asset_name: asset_name || primaryHolding?.asset_name,
+          asset_type: asset_type || primaryHolding?.asset_type || "stock",
+          quantity: newQuantity,
+          average_cost: newAverageCost,
+          current_price: numericCurrentPrice,
+          market_value: newQuantity * numericCurrentPrice,
+          weight: 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", primaryHolding.id)
+        .select()
+        .single()
+
+      changedHolding = data
+      holdingError = error
+
+      const duplicateIds = (existingHoldings || [])
+        .slice(1)
+        .map((holding) => holding.id)
+
+      if (duplicateIds.length > 0) {
+        await supabase.from("agent_holdings").delete().in("id", duplicateIds)
+      }
+    } else {
+      const { data, error } = await supabase
+        .from("agent_holdings")
+        .insert({
+          agent_id: id,
+          symbol: normalizedSymbol,
+          asset_name,
+          asset_type: asset_type || "stock",
+          quantity: numericQuantity,
+          average_cost: numericAverageCost || numericCurrentPrice,
+          current_price: numericCurrentPrice,
+          market_value: marketValue,
+          weight: 0,
+        })
+        .select()
+        .single()
+
+      changedHolding = data
+      holdingError = error
+    }
+  }
 
   if (holdingError) {
     return NextResponse.json(
@@ -105,17 +235,25 @@ export async function POST(
 
   const totalValue = newCashBalance + holdingsValue
 
-  for (const holding of allHoldings || []) {
+  const weightedHoldings = (allHoldings || []).map((holding) => {
     const holdingWeight =
       totalValue > 0
         ? (Number(holding.market_value || 0) / totalValue) * 100
         : 0
 
+    return {
+      ...holding,
+      weight: holdingWeight,
+      updated_at: new Date().toISOString(),
+    }
+  })
+
+  for (const holding of weightedHoldings) {
     await supabase
       .from("agent_holdings")
       .update({
-        weight: holdingWeight,
-        updated_at: new Date().toISOString(),
+        weight: holding.weight,
+        updated_at: holding.updated_at,
       })
       .eq("id", holding.id)
   }
@@ -153,7 +291,9 @@ export async function POST(
 
   return NextResponse.json({
     success: true,
-    holding: newHolding,
+    holding: changedHolding,
+    action: tradeAction,
+    holdings: weightedHoldings,
     cash_balance: newCashBalance,
     holdings_value: holdingsValue,
     total_value: totalValue,

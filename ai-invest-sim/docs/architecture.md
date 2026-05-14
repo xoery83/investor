@@ -58,6 +58,10 @@ Mock data is acceptable for placeholder screens, but not for agent-owned portfol
 5. Rebalance recommendation parser and validation layer
 6. Portfolio allocation engine that can turn approved target weights into simulated trades
 
+## Market Data Refresh
+
+Dashboard refreshes should not fan out directly into unlimited Yahoo Finance calls. The valuation endpoint uses `market_quotes_cache` as a short-lived quote cache and throttles `agent_valuations` writes, so multiple viewers of the same dashboard reuse recent data instead of creating duplicate quote requests and duplicate valuation snapshots. Regular and pre-market quotes use a short cache window, while after-hours or closed-market quotes can be reused for longer.
+
 ## Suggested Next Tables
 
 - `agent_transactions` for simulated buys, sells, deposits, withdrawals, and rebalance executions

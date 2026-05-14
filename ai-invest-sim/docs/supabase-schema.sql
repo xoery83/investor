@@ -4,8 +4,26 @@
 
 create extension if not exists pgcrypto;
 
+create table if not exists public.user_profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  display_name text,
+  role text not null default 'free'
+    check (role in ('admin', 'free', 'plus', 'pro')),
+  plan_status text not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.agents (
   id uuid primary key default gen_random_uuid(),
+  owner_user_id uuid references auth.users(id) on delete set null,
+  visibility text not null default 'private'
+    check (visibility in ('private', 'public', 'system')),
+  creator_type text not null default 'user'
+    check (creator_type in ('admin', 'user')),
+  lifecycle_status text not null default 'active'
+    check (lifecycle_status in ('active', 'paused', 'retired', 'archived')),
   name text not null,
   description text,
   philosophy text,
@@ -68,3 +86,133 @@ create table if not exists public.agent_valuations (
 
 create index if not exists agent_valuations_agent_id_recorded_at_idx
   on public.agent_valuations(agent_id, recorded_at asc);
+
+create table if not exists public.market_quotes_cache (
+  symbol text primary key,
+  name text,
+  price numeric not null default 0,
+  price_source text not null default 'regular'
+    check (price_source in ('pre', 'regular', 'post')),
+  currency text not null default 'USD',
+  exchange text,
+  market_state text,
+  asset_type text,
+  fetched_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists market_quotes_cache_fetched_at_idx
+  on public.market_quotes_cache(fetched_at desc);
+
+create table if not exists public.agent_profiles (
+  id uuid primary key default gen_random_uuid(),
+  agent_id uuid not null unique references public.agents(id) on delete cascade,
+  strategy_type text not null default 'conservative_growth',
+  objective text not null,
+  target_annual_return_min numeric not null default 8,
+  target_annual_return_max numeric not null default 15,
+  max_drawdown_pct numeric not null default 20,
+  target_markets jsonb not null default '[]'::jsonb,
+  allowed_assets jsonb not null default '[]'::jsonb,
+  excluded_assets jsonb not null default '[]'::jsonb,
+  manager_instructions text,
+  config jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.risk_policies (
+  id uuid primary key default gen_random_uuid(),
+  agent_id uuid not null unique references public.agents(id) on delete cascade,
+  min_cash_pct numeric not null default 5,
+  max_cash_pct numeric not null default 25,
+  max_single_stock_pct numeric not null default 20,
+  max_etf_pct numeric not null default 40,
+  max_one_trade_pct numeric not null default 10,
+  max_weekly_turnover_pct numeric not null default 15,
+  max_drawdown_pct numeric not null default 20,
+  prohibited_assets jsonb not null default '[]'::jsonb,
+  policy jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.workflow_configs (
+  id uuid primary key default gen_random_uuid(),
+  agent_id uuid not null unique references public.agents(id) on delete cascade,
+  daily_enabled boolean not null default true,
+  daily_prompt_template_key text not null default 'conservative_daily_v1',
+  weekly_enabled boolean not null default true,
+  weekly_prompt_template_key text not null default 'conservative_weekly_v1',
+  escalation_enabled boolean not null default true,
+  escalation_prompt_template_key text not null default 'conservative_escalation_v1',
+  validator_enabled boolean not null default true,
+  validator_prompt_template_key text not null default 'conservative_validator_v1',
+  max_revision_attempts integer not null default 2,
+  config jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.agent_investment_universes (
+  id uuid primary key default gen_random_uuid(),
+  agent_id uuid not null references public.agents(id) on delete cascade,
+  version integer not null default 1,
+  status text not null default 'active'
+    check (status in ('active', 'archived')),
+  universe_name text not null,
+  market_scope jsonb not null default '[]'::jsonb,
+  allowed_exchanges jsonb not null default '[]'::jsonb,
+  currency_scope jsonb not null default '[]'::jsonb,
+  allowed_asset_types jsonb not null default '[]'::jsonb,
+  core_etfs jsonb not null default '[]'::jsonb,
+  core_stocks jsonb not null default '[]'::jsonb,
+  watchlist jsonb not null default '[]'::jsonb,
+  excluded_assets jsonb not null default '[]'::jsonb,
+  generation_prompt text,
+  generation_result jsonb not null default '{}'::jsonb,
+  confidence text not null default 'medium'
+    check (confidence in ('low', 'medium', 'high')),
+  source text not null default 'openai'
+    check (source in ('openai', 'fallback', 'manual')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.prompt_templates (
+  id uuid primary key default gen_random_uuid(),
+  template_key text not null unique,
+  run_type text not null,
+  name text not null,
+  version integer not null default 1,
+  system_prompt text not null,
+  user_prompt_template text not null,
+  variables jsonb not null default '[]'::jsonb,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.trade_proposals (
+  id uuid primary key default gen_random_uuid(),
+  agent_id uuid not null references public.agents(id) on delete cascade,
+  source_run_id uuid references public.agent_runs(id) on delete set null,
+  status text not null default 'pending',
+  proposal jsonb not null default '{}'::jsonb,
+  validator_status text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.validator_results (
+  id uuid primary key default gen_random_uuid(),
+  agent_id uuid not null references public.agents(id) on delete cascade,
+  run_id uuid references public.agent_runs(id) on delete set null,
+  trade_proposal_id uuid references public.trade_proposals(id) on delete set null,
+  validation_status text not null default 'pending',
+  violations jsonb not null default '[]'::jsonb,
+  final_action_allowed boolean not null default false,
+  revision_attempt integer not null default 0,
+  result jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);

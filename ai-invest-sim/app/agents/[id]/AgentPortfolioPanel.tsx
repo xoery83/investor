@@ -5,10 +5,7 @@ import * as React from "react"
 import AddHoldingForm from "./AddHoldingForm"
 import ValuationPanel from "./ValuationPanel"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
-import type {
-  AgentHolding,
-  AgentValuation,
-} from "../../../src/lib/types/agent"
+import type { AgentValuation } from "../../../src/lib/types/agent"
 
 export type PortfolioSummary = {
   cash_balance: number
@@ -16,80 +13,173 @@ export type PortfolioSummary = {
   total_value: number
 }
 
+export type TradeDraft = {
+  key: string
+  action: "buy" | "sell"
+  symbol: string
+  assetType?: string
+  targetWeight?: number
+  currentWeight?: number
+  estimatedPortfolioPctChange?: number
+}
+
 type AgentPortfolioPanelProps = {
   agentId: string
-  initialHoldings: AgentHolding[]
+  holdings: UpdatedHolding[]
   initialValuations: AgentValuation[]
+  tradeDraft?: TradeDraft | null
+  totalValue: number
+  onUseHolding?: (holding: UpdatedHolding) => void
+  onHoldingsUpdated?: (holdings: UpdatedHolding[]) => void
   onSummaryUpdated?: (summary: PortfolioSummary) => void
 }
 
 export default function AgentPortfolioPanel({
   agentId,
-  initialHoldings,
+  holdings,
   initialValuations,
+  tradeDraft,
+  totalValue,
+  onUseHolding,
+  onHoldingsUpdated,
   onSummaryUpdated,
 }: AgentPortfolioPanelProps) {
-  const [holdings, setHoldings] = React.useState<UpdatedHolding[]>(
-    initialHoldings.map((holding) => ({
-      ...holding,
-      price_source: "manual",
-      market_state: "LOADED",
-    }))
+  const [activeTab, setActiveTab] = React.useState<"holdings" | "valuation">(
+    "holdings"
   )
 
   return (
-    <>
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="border border-slate-800 rounded-xl p-6 lg:col-span-2">
-          <h2 className="text-xl font-semibold mb-4">Holdings</h2>
-
-          {holdings.length === 0 ? (
-            <p className="text-slate-500">No holdings yet.</p>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-6 gap-3 text-sm text-slate-500 border-b border-slate-800 pb-2">
-                <span>Symbol</span>
-                <span>Shares</span>
-                <span>Weight</span>
-                <span>Price</span>
-                <span>Source</span>
-                <span className="text-right">Market Value</span>
-              </div>
-
-              {holdings.map((holding) => (
-                <div
-                  key={holding.id}
-                  className="grid grid-cols-6 gap-3 border-b border-slate-800 pb-2 text-sm"
-                >
-                  <span className="font-medium">{holding.symbol}</span>
-                  <span>{formatShares(holding.quantity)}</span>
-                  <span>{Number(holding.weight || 0).toFixed(2)}%</span>
-                  <span>${Number(holding.current_price || 0).toLocaleString()}</span>
-                  <span>
-                    <PriceSourceBadge
-                      source={holding.price_source || "manual"}
-                      marketState={holding.market_state}
-                    />
-                  </span>
-                  <span className="text-right">
-                    ${Number(holding.market_value || 0).toLocaleString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+    <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+      <div className="rounded-xl border border-slate-800 p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">Portfolio Workspace</h2>
+          <div className="inline-flex overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+            <TabButton
+              active={activeTab === "holdings"}
+              onClick={() => setActiveTab("holdings")}
+            >
+              Holdings
+            </TabButton>
+            <TabButton
+              active={activeTab === "valuation"}
+              onClick={() => setActiveTab("valuation")}
+            >
+              Valuation
+            </TabButton>
+          </div>
         </div>
 
-        <AddHoldingForm agentId={agentId} />
-      </section>
+        {activeTab === "holdings" ? (
+          <HoldingsTable holdings={holdings} onUseHolding={onUseHolding} />
+        ) : (
+          <ValuationPanel
+            agentId={agentId}
+            initialValuations={initialValuations}
+            embedded
+            onHoldingsUpdated={onHoldingsUpdated}
+            onSummaryUpdated={onSummaryUpdated}
+          />
+        )}
+      </div>
 
-      <ValuationPanel
+      <AddHoldingForm
         agentId={agentId}
-        initialValuations={initialValuations}
-        onHoldingsUpdated={setHoldings}
-        onSummaryUpdated={onSummaryUpdated}
+        holdings={holdings}
+        tradeDraft={tradeDraft}
+        totalValue={totalValue}
+        onTradeCompleted={(payload) => {
+          onHoldingsUpdated?.(payload.holdings)
+          onSummaryUpdated?.({
+            cash_balance: payload.cash_balance,
+            holdings_value: payload.holdings_value,
+            total_value: payload.total_value,
+          })
+        }}
       />
-    </>
+    </section>
+  )
+}
+
+function HoldingsTable({
+  holdings,
+  onUseHolding,
+}: {
+  holdings: UpdatedHolding[]
+  onUseHolding?: (holding: UpdatedHolding) => void
+}) {
+  return (
+    <div>
+      {holdings.length === 0 ? (
+        <p className="text-slate-500">No holdings yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <div className="grid min-w-[760px] grid-cols-[1.1fr_0.9fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 border-b border-slate-800 pb-2 text-sm text-slate-500">
+            <span>Symbol</span>
+            <span>Asset Type</span>
+            <span>Shares</span>
+            <span>Weight</span>
+            <span>Price</span>
+            <span>Source</span>
+            <span className="text-right">Market Value</span>
+          </div>
+
+          {holdings.map((holding) => (
+            <div
+              key={holding.id}
+              className="grid min-w-[760px] grid-cols-[1.1fr_0.9fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 border-b border-slate-800 py-2 text-sm"
+            >
+              <button
+                type="button"
+                onClick={() => onUseHolding?.(holding)}
+                className="text-left font-medium text-blue-300 hover:text-blue-200"
+                title="Load this holding into the trade form"
+              >
+                {holding.symbol}
+              </button>
+              <span className="capitalize text-slate-300">
+                {holding.asset_type || "stock"}
+              </span>
+              <span>{formatShares(holding.quantity)}</span>
+              <span>{Number(holding.weight || 0).toFixed(2)}%</span>
+              <span>${Number(holding.current_price || 0).toLocaleString()}</span>
+              <span>
+                <PriceSourceBadge
+                  source={holding.price_source || "manual"}
+                  marketState={holding.market_state}
+                />
+              </span>
+              <span className="text-right">
+                ${Number(holding.market_value || 0).toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "bg-blue-600 px-3 py-1.5 text-xs font-medium text-white"
+          : "px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-900 hover:text-white"
+      }
+    >
+      {children}
+    </button>
   )
 }
 

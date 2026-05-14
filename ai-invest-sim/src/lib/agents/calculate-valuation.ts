@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { getPrice } from "../market/get-price"
+import { getCachedPrice } from "../market/get-cached-price"
 import type { Agent, AgentHolding, AgentValuation } from "../types/agent"
 
 type CalculateValuationInput = {
@@ -30,7 +30,10 @@ export async function calculateAndStoreValuation({
   holdings,
   previousValuation,
 }: CalculateValuationInput): Promise<ValuationSnapshot> {
-  const refreshedHoldings = await refreshHoldingPrices(holdings)
+  const refreshedHoldings = await refreshHoldingPrices(
+    supabase,
+    holdings
+  )
   const cashBalance = Number(agent.cash_balance || 0)
   const holdingsValue = refreshedHoldings.reduce(
     (sum, holding) => sum + Number(holding.market_value || 0),
@@ -123,6 +126,7 @@ export async function calculateAndStoreValuation({
 }
 
 async function refreshHoldingPrices(
+  supabase: SupabaseClient,
   holdings: AgentHolding[]
 ): Promise<UpdatedHolding[]> {
   return Promise.all(
@@ -141,7 +145,7 @@ async function refreshHoldingPrices(
       }
 
       try {
-        const quote = await getPrice(holding.symbol)
+        const quote = await getCachedPrice(supabase, holding.symbol)
         const price = quote.price || Number(holding.current_price || 0)
 
         return {

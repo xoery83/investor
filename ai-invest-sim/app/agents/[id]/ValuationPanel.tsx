@@ -21,6 +21,7 @@ import type { AgentValuation } from "../../../src/lib/types/agent"
 type ValuationPanelProps = {
   agentId: string
   initialValuations: AgentValuation[]
+  embedded?: boolean
   onHoldingsUpdated?: (holdings: UpdatedHolding[]) => void
   onSummaryUpdated?: (summary: PortfolioSummary) => void
 }
@@ -50,6 +51,7 @@ const RANGE_OPTIONS: Array<{ value: ValuationRange; label: string }> = [
 export default function ValuationPanel({
   agentId,
   initialValuations,
+  embedded = false,
   onHoldingsUpdated,
   onSummaryUpdated,
 }: ValuationPanelProps) {
@@ -113,7 +115,13 @@ export default function ValuationPanel({
   const latest = valuations[valuations.length - 1]
 
   return (
-    <section className="border border-slate-800 rounded-xl p-6 mt-8">
+    <section
+      className={
+        embedded
+          ? "rounded-xl"
+          : "mt-8 rounded-xl border border-slate-800 p-6"
+      }
+    >
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">Valuation History</h2>
