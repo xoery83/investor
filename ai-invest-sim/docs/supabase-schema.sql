@@ -23,7 +23,9 @@ create table if not exists public.agents (
   creator_type text not null default 'user'
     check (creator_type in ('admin', 'user')),
   lifecycle_status text not null default 'active'
-    check (lifecycle_status in ('active', 'paused', 'retired', 'archived')),
+    check (lifecycle_status in ('draft', 'active', 'paused', 'retired', 'archived')),
+  manual_trade_allowed boolean not null default true,
+  proposal_execution_required boolean not null default false,
   name text not null,
   description text,
   philosophy text,
@@ -39,6 +41,23 @@ create table if not exists public.agents (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table if not exists public.agent_follows (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  agent_id uuid not null references public.agents(id) on delete cascade,
+  status text not null default 'active'
+    check (status in ('active', 'paused_by_agent', 'exited', 'force_exited')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, agent_id)
+);
+
+create index if not exists agent_follows_user_status_idx
+  on public.agent_follows(user_id, status, created_at desc);
+
+create index if not exists agent_follows_agent_status_idx
+  on public.agent_follows(agent_id, status, created_at desc);
 
 create table if not exists public.agent_holdings (
   id uuid primary key default gen_random_uuid(),

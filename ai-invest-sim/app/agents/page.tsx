@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import type { User } from "@supabase/supabase-js"
 
@@ -10,11 +10,15 @@ import type { Agent } from "../../src/lib/types/agent"
 type AgentListItem = Agent & {
   creator_display_name?: string
   creator_role?: string
+  follower_count?: number
+  is_following?: boolean
 }
 
 type SourceFilter = "all" | "system" | "user"
 type VisibilityFilter = "all" | Agent["visibility"]
 type LifecycleFilter = "all" | Agent["lifecycle_status"]
+type FollowingFilter = "all" | "following"
+const AGENTS_CACHE_TTL_MS = 60_000
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentListItem[]>([])
@@ -26,25 +30,51 @@ export default function AgentsPage() {
     useState<VisibilityFilter>("all")
   const [lifecycleFilter, setLifecycleFilter] =
     useState<LifecycleFilter>("all")
+  const [followingFilter, setFollowingFilter] =
+    useState<FollowingFilter>("all")
+  const [searchQuery, setSearchQuery] = useState("")
+  const inFlightRequestKey = useRef<string | null>(null)
 
   const loadAgents = useCallback(async (token: string | null) => {
+    const cacheKey = token ? "agents:list:auth" : "agents:list:anon"
+    const requestKey = token || "anonymous"
+    const cached = readAgentsCache(cacheKey)
+
+    if (cached) {
+      setAgents(cached)
+      setLoading(false)
+      return
+    }
+
+    if (inFlightRequestKey.current === requestKey) {
+      return
+    }
+
+    inFlightRequestKey.current = requestKey
     setLoading(true)
     setError("")
 
-    const res = await fetch("/api/agents", {
-      cache: "no-store",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    const data = await res.json()
+    try {
+      const res = await fetch("/api/agents", {
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      const data = await res.json()
 
-    if (!data.success) {
-      setError(data.error || "Failed to load agents")
-      setAgents([])
-    } else {
-      setAgents(data.agents || [])
+      if (!data.success) {
+        setError(data.error || "Failed to load agents")
+        setAgents([])
+      } else {
+        setAgents(data.agents || [])
+        writeAgentsCache(cacheKey, data.agents || [])
+      }
+    } finally {
+      if (inFlightRequestKey.current === requestKey) {
+        inFlightRequestKey.current = null
+      }
+
+      setLoading(false)
     }
-
-    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -69,7 +99,11 @@ export default function AgentsPage() {
   const filteredAgents = useMemo(
     () =>
       agents.filter((agent) => {
+        const query = searchQuery.trim().toLowerCase()
         const systemAgent = isSystemOrAdminAgent(agent)
+        if (followingFilter === "following" && !agent.is_following) {
+          return false
+        }
         if (sourceFilter === "system" && !systemAgent) return false
         if (sourceFilter === "user" && systemAgent) return false
         if (
@@ -84,9 +118,17 @@ export default function AgentsPage() {
         ) {
           return false
         }
+        if (query && !agentMatchesQuery(agent, query)) return false
         return true
       }),
-    [agents, lifecycleFilter, sourceFilter, visibilityFilter]
+    [
+      agents,
+      followingFilter,
+      lifecycleFilter,
+      searchQuery,
+      sourceFilter,
+      visibilityFilter,
+    ]
   )
   const systemAgents = filteredAgents.filter(isSystemOrAdminAgent)
   const userAgents = filteredAgents.filter(
@@ -114,6 +156,7 @@ export default function AgentsPage() {
                   type="button"
                   onClick={async () => {
                     await supabase.auth.signOut()
+                    clearAgentsCache()
                     setUser(null)
                     await loadAgents(null)
                   }}
@@ -124,7 +167,7 @@ export default function AgentsPage() {
               </>
             ) : (
               <Link
-                href="/auth/login"
+                href="/auth/login?next=%2Fagents"
                 className="rounded-lg border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-900"
               >
                 Log in
@@ -143,9 +186,14 @@ export default function AgentsPage() {
           sourceFilter={sourceFilter}
           visibilityFilter={visibilityFilter}
           lifecycleFilter={lifecycleFilter}
+          followingFilter={followingFilter}
+          searchQuery={searchQuery}
+          userLoggedIn={Boolean(user)}
           onSourceChange={setSourceFilter}
           onVisibilityChange={setVisibilityFilter}
           onLifecycleChange={setLifecycleFilter}
+          onFollowingChange={setFollowingFilter}
+          onSearchChange={setSearchQuery}
         />
 
         {error && (
@@ -164,7 +212,7 @@ export default function AgentsPage() {
                 : "No public agents yet. Log in to create your own private agent."}
             </p>
             <Link
-              href={user ? "/agents/new" : "/auth/login"}
+              href={user ? "/agents/new" : "/auth/login?next=%2Fagents"}
               className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 hover:bg-blue-700"
             >
               {user ? "Create your first Agent" : "Log in"}
@@ -201,19 +249,52 @@ function AgentFilters({
   sourceFilter,
   visibilityFilter,
   lifecycleFilter,
+  followingFilter,
+  searchQuery,
+  userLoggedIn,
   onSourceChange,
   onVisibilityChange,
   onLifecycleChange,
+  onFollowingChange,
+  onSearchChange,
 }: {
   sourceFilter: SourceFilter
   visibilityFilter: VisibilityFilter
   lifecycleFilter: LifecycleFilter
+  followingFilter: FollowingFilter
+  searchQuery: string
+  userLoggedIn: boolean
   onSourceChange: (value: SourceFilter) => void
   onVisibilityChange: (value: VisibilityFilter) => void
   onLifecycleChange: (value: LifecycleFilter) => void
+  onFollowingChange: (value: FollowingFilter) => void
+  onSearchChange: (value: string) => void
 }) {
   return (
     <section className="mb-6 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+      <div className="mb-3 grid gap-3 md:grid-cols-[1.3fr_0.7fr]">
+        <label className="block">
+          <span className="mb-2 block text-xs uppercase tracking-widest text-slate-500">
+            Search
+          </span>
+          <input
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search name, description, creator, risk, frequency..."
+            className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-500"
+          />
+        </label>
+        <FilterSelect
+          label="Following"
+          value={followingFilter}
+          onChange={(value) => onFollowingChange(value as FollowingFilter)}
+          disabled={!userLoggedIn}
+          options={[
+            ["all", userLoggedIn ? "All agents" : "Log in to filter"],
+            ["following", "Following only"],
+          ]}
+        />
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
         <FilterSelect
           label="Source"
@@ -242,6 +323,7 @@ function AgentFilters({
           onChange={(value) => onLifecycleChange(value as LifecycleFilter)}
           options={[
             ["all", "All status"],
+            ["draft", "Draft"],
             ["active", "Active"],
             ["paused", "Paused"],
             ["retired", "Retired"],
@@ -258,11 +340,13 @@ function FilterSelect({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   label: string
   value: string
   options: [string, string][]
   onChange: (value: string) => void
+  disabled?: boolean
 }) {
   return (
     <label className="block">
@@ -272,6 +356,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500"
       >
         {options.map(([optionValue, optionLabel]) => (
@@ -332,7 +417,7 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
         <h3 className="text-xl font-semibold">{agent.name}</h3>
         <span
           className={`rounded px-2 py-1 text-xs ${
-            agent.lifecycle_status === "active" && agent.is_active
+            agent.lifecycle_status === "active"
               ? "bg-green-900 text-green-300"
               : "bg-slate-800 text-slate-400"
           }`}
@@ -345,6 +430,7 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
         <AgentPill value={agent.visibility || "private"} />
         <AgentPill value={agent.creator_type || "user"} />
         {agent.creator_role && <AgentPill value={agent.creator_role} />}
+        {agent.is_following && <AgentPill value="following" />}
       </div>
 
       <p className="mb-4 min-h-10 text-sm text-slate-400">
@@ -359,6 +445,10 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
         <AgentMetric
           label="Creator"
           value={agent.creator_display_name || "Unknown user"}
+        />
+        <AgentMetric
+          label="Followers"
+          value={String(agent.follower_count || 0)}
         />
         <AgentMetric label="Risk" value={agent.risk_level} />
         <AgentMetric label="Frequency" value={agent.rebalance_frequency} />
@@ -390,4 +480,64 @@ function isSystemOrAdminAgent(agent: AgentListItem) {
 
 function formatToken(value: string) {
   return value.replaceAll("_", " ")
+}
+
+function agentMatchesQuery(agent: AgentListItem, query: string) {
+  const haystack = [
+    agent.name,
+    agent.description,
+    agent.philosophy,
+    agent.creator_display_name,
+    agent.creator_role,
+    agent.risk_level,
+    agent.rebalance_frequency,
+    agent.visibility,
+    agent.lifecycle_status,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+
+  return haystack.includes(query)
+}
+
+function readAgentsCache(key: string) {
+  if (typeof window === "undefined") return null
+
+  try {
+    const cached = window.sessionStorage.getItem(key)
+    if (!cached) return null
+    const parsed = JSON.parse(cached) as {
+      savedAt: number
+      agents: AgentListItem[]
+    }
+    if (Date.now() - parsed.savedAt > AGENTS_CACHE_TTL_MS) return null
+    return parsed.agents
+  } catch {
+    return null
+  }
+}
+
+function writeAgentsCache(key: string, agents: AgentListItem[]) {
+  if (typeof window === "undefined") return
+
+  try {
+    window.sessionStorage.setItem(
+      key,
+      JSON.stringify({ savedAt: Date.now(), agents })
+    )
+  } catch {
+    // Cache writes are best effort only.
+  }
+}
+
+function clearAgentsCache() {
+  if (typeof window === "undefined") return
+
+  try {
+    window.sessionStorage.removeItem("agents:list:auth")
+    window.sessionStorage.removeItem("agents:list:anon")
+  } catch {
+    // Cache clearing is best effort only.
+  }
 }

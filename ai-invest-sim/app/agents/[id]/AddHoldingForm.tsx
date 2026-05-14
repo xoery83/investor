@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
 import type { AgentHolding } from "../../../src/lib/types/agent"
+import { supabase } from "../../../src/lib/supabase"
 import type { PortfolioSummary, TradeDraft } from "./AgentPortfolioPanel"
 
 export default function AddHoldingForm({
@@ -184,10 +185,20 @@ export default function AddHoldingForm({
     setLoading(true)
     setError("")
 
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in before trading this agent.")
+      setLoading(false)
+      return
+    }
+
     const res = await fetch(`/api/agents/${agentId}/holdings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         action,

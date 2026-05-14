@@ -20,7 +20,7 @@ export type Agent = {
 
   creator_type: "admin" | "user"
 
-  lifecycle_status: "active" | "paused" | "retired" | "archived"
+  lifecycle_status: "draft" | "active" | "paused" | "retired" | "archived"
 
   name: string
 
@@ -37,6 +37,10 @@ export type Agent = {
   cash_balance: number
 
   is_active: boolean
+
+  manual_trade_allowed: boolean
+
+  proposal_execution_required: boolean
 
   rebalance_frequency: RebalanceFrequency
 
@@ -194,6 +198,15 @@ export type TradeProposal = {
 
 export type TradeProposalWithValidation = TradeProposal & {
   validator_results?: ValidatorResult[]
+}
+
+export type AgentFollow = {
+  id: string
+  user_id: string
+  agent_id: string
+  status: "active" | "paused_by_agent" | "exited" | "force_exited"
+  created_at: string
+  updated_at: string
 }
 
 export type ValidatorResult = {

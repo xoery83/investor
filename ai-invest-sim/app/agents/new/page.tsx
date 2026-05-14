@@ -109,6 +109,12 @@ export default function NewAgentPage() {
       return
     }
 
+    try {
+      window.sessionStorage.removeItem("agents:list:auth")
+    } catch {
+      // Cache invalidation is best effort only.
+    }
+
     router.push("/agents")
     router.refresh()
   }

@@ -32,6 +32,8 @@ type AgentPortfolioPanelProps = {
   onUseHolding?: (holding: UpdatedHolding) => void
   onHoldingsUpdated?: (holdings: UpdatedHolding[]) => void
   onSummaryUpdated?: (summary: PortfolioSummary) => void
+  canTrade?: boolean
+  canRefreshValuation?: boolean
 }
 
 export default function AgentPortfolioPanel({
@@ -43,13 +45,21 @@ export default function AgentPortfolioPanel({
   onUseHolding,
   onHoldingsUpdated,
   onSummaryUpdated,
+  canTrade = false,
+  canRefreshValuation = false,
 }: AgentPortfolioPanelProps) {
   const [activeTab, setActiveTab] = React.useState<"holdings" | "valuation">(
     "holdings"
   )
 
   return (
-    <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+    <section
+      className={
+        canTrade
+          ? "grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]"
+          : "grid grid-cols-1 gap-6"
+      }
+    >
       <div className="rounded-xl border border-slate-800 p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xl font-semibold">Portfolio Workspace</h2>
@@ -78,24 +88,27 @@ export default function AgentPortfolioPanel({
             embedded
             onHoldingsUpdated={onHoldingsUpdated}
             onSummaryUpdated={onSummaryUpdated}
+            canRefresh={canRefreshValuation}
           />
         )}
       </div>
 
-      <AddHoldingForm
-        agentId={agentId}
-        holdings={holdings}
-        tradeDraft={tradeDraft}
-        totalValue={totalValue}
-        onTradeCompleted={(payload) => {
-          onHoldingsUpdated?.(payload.holdings)
-          onSummaryUpdated?.({
-            cash_balance: payload.cash_balance,
-            holdings_value: payload.holdings_value,
-            total_value: payload.total_value,
-          })
-        }}
-      />
+      {canTrade && (
+        <AddHoldingForm
+          agentId={agentId}
+          holdings={holdings}
+          tradeDraft={tradeDraft}
+          totalValue={totalValue}
+          onTradeCompleted={(payload) => {
+            onHoldingsUpdated?.(payload.holdings)
+            onSummaryUpdated?.({
+              cash_balance: payload.cash_balance,
+              holdings_value: payload.holdings_value,
+              total_value: payload.total_value,
+            })
+          }}
+        />
+      )}
     </section>
   )
 }

@@ -6,6 +6,7 @@ import {
   defaultRiskPolicy,
 } from "../../../../../src/lib/agents/default-config"
 import { generateInvestmentUniverse } from "../../../../../src/lib/agents/investment-universe"
+import { canEditAgent } from "../../../../../src/lib/auth/permissions"
 import { getRequestUser } from "../../../../../src/lib/auth/server"
 import type {
   AgentInvestmentUniverse,
@@ -73,12 +74,10 @@ export async function POST(
     )
   }
 
-  const isAdmin = requestUser.profile.role === "admin"
-  const isOwner = agent.owner_user_id === requestUser.id
-
-  if (!isAdmin && !isOwner) {
+  const editPermission = canEditAgent(requestUser, agent)
+  if (!editPermission.allowed) {
     return NextResponse.json(
-      { success: false, error: "You do not have permission to update this agent" },
+      { success: false, error: editPermission.reason },
       { status: 403 }
     )
   }

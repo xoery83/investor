@@ -18,6 +18,11 @@ import {
   runResearchAgent,
 } from "../../../../../src/lib/agents/run-agent"
 import { validateTradeProposal } from "../../../../../src/lib/agents/validate-trade-proposal"
+import {
+  canManualRunToday,
+  canRunAgent,
+} from "../../../../../src/lib/auth/permissions"
+import { getRequestUser } from "../../../../../src/lib/auth/server"
 import type {
   AgentRunType,
   AgentInvestmentUniverse,
@@ -36,8 +41,16 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params
+  const requestUser = await getRequestUser(request)
   const body = await request.json().catch(() => ({}))
   const runType = readRunType(body.run_type)
+
+  if (!requestUser) {
+    return NextResponse.json(
+      { success: false, error: "Login required to run an agent" },
+      { status: 401 }
+    )
+  }
 
   const { data: agent, error: agentError } = await supabase
     .from("agents")
@@ -52,14 +65,28 @@ export async function POST(
     )
   }
 
-  if (!agent.is_active) {
+  const runPermission = canRunAgent(requestUser, agent)
+  if (!runPermission.allowed) {
     return NextResponse.json(
-      { success: false, error: "Agent is paused" },
-      { status: 400 }
+      { success: false, error: runPermission.reason },
+      { status: 403 }
     )
   }
 
   try {
+    const todayRunCount = await countManualRunsToday(requestUser.id)
+    const quotaPermission = canManualRunToday({
+      user: requestUser,
+      runCount: todayRunCount,
+    })
+
+    if (!quotaPermission.allowed) {
+      return NextResponse.json(
+        { success: false, error: quotaPermission.reason },
+        { status: 403 }
+      )
+    }
+
     const { data: holdings } = await supabase
       .from("agent_holdings")
       .select("*")
@@ -293,6 +320,19 @@ export async function POST(
       { status: 500 }
     )
   }
+}
+
+async function countManualRunsToday(userId: string) {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+
+  const { count } = await supabase
+    .from("agent_runs")
+    .select("id, agents!inner(owner_user_id)", { count: "exact", head: true })
+    .eq("agents.owner_user_id", userId)
+    .gte("created_at", start.toISOString())
+
+  return count || 0
 }
 
 function readRunType(value: unknown): AgentRunType {

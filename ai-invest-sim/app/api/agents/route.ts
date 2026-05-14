@@ -7,6 +7,10 @@ import {
   defaultWorkflowConfig,
 } from "../../../src/lib/agents/default-config"
 import { generateInvestmentUniverse } from "../../../src/lib/agents/investment-universe"
+import {
+  canActivateMoreAgents,
+  canCreateMoreAgents,
+} from "../../../src/lib/auth/permissions"
 import { getRequestUser } from "../../../src/lib/auth/server"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -16,6 +20,7 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export async function GET(request: Request) {
   const requestUser = await getRequestUser(request)
+  const authedSupabase = createAuthedClient(request)
   const { data, error } = await supabase
     .from("agents")
     .select("*")
@@ -44,6 +49,13 @@ export async function GET(request: Request) {
     )
   )
   const profileMap = await loadCreatorProfiles(ownerIds)
+  const followCounts = await loadFollowCounts(
+    authedSupabase,
+    visibleAgents.map((agent) => agent.id)
+  )
+  const followingSet = requestUser
+    ? await loadUserFollowingSet(authedSupabase, requestUser.id)
+    : new Set<string>()
   const agents = visibleAgents.map((agent) => {
     const profile = agent.owner_user_id
       ? profileMap.get(agent.owner_user_id)
@@ -57,6 +69,8 @@ export async function GET(request: Request) {
         (agent.creator_type === "admin" || agent.visibility === "system"
           ? "admin"
           : "user"),
+      follower_count: followCounts.get(agent.id) || 0,
+      is_following: followingSet.has(agent.id),
     }
   })
 
@@ -99,6 +113,55 @@ export async function POST(request: Request) {
     )
   }
 
+  const { count: ownedAgentCount, error: ownedAgentCountError } = await supabase
+    .from("agents")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_user_id", requestUser.id)
+
+  if (ownedAgentCountError) {
+    return NextResponse.json(
+      { success: false, error: ownedAgentCountError.message },
+      { status: 500 }
+    )
+  }
+
+  const createPermission = canCreateMoreAgents({
+    user: requestUser,
+    agentCount: ownedAgentCount || 0,
+  })
+
+  if (!createPermission.allowed) {
+    return NextResponse.json(
+      { success: false, error: createPermission.reason },
+      { status: 403 }
+    )
+  }
+
+  const { count: activeAgentCount, error: activeAgentCountError } =
+    await supabase
+      .from("agents")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_user_id", requestUser.id)
+      .eq("lifecycle_status", "active")
+
+  if (activeAgentCountError) {
+    return NextResponse.json(
+      { success: false, error: activeAgentCountError.message },
+      { status: 500 }
+    )
+  }
+
+  const activePermission = canActivateMoreAgents({
+    user: requestUser,
+    activeAgentCount: activeAgentCount || 0,
+  })
+  const resolvedLifecycleStatus =
+    lifecycle_status === "active" || !lifecycle_status
+      ? activePermission.allowed
+        ? "active"
+        : "draft"
+      : lifecycle_status
+
   const { data, error } = await supabase
     .from("agents")
     .insert({
@@ -112,12 +175,12 @@ export async function POST(request: Request) {
         requestUser.profile.role
       ),
       creator_type: requestUser.profile.role === "admin" ? "admin" : "user",
-      lifecycle_status: lifecycle_status || "active",
+      lifecycle_status: resolvedLifecycleStatus,
       initial_capital,
       cash_balance: initial_capital,
       current_value: initial_capital,
       rebalance_frequency: rebalance_frequency || "daily",
-      is_active: true,
+      is_active: resolvedLifecycleStatus === "active",
     })
     .select()
     .single()
@@ -185,6 +248,49 @@ async function loadCreatorProfiles(ownerIds: string[]) {
   return new Map<string, CreatorProfile>(
     ((data || []) as CreatorProfile[]).map((profile) => [profile.id, profile])
   )
+}
+
+async function loadFollowCounts(
+  client: typeof supabase,
+  agentIds: string[]
+) {
+  if (agentIds.length === 0) return new Map<string, number>()
+
+  const { data, error } = await client
+    .from("agent_follows")
+    .select("agent_id")
+    .in("agent_id", agentIds)
+    .eq("status", "active")
+
+  if (error) return new Map<string, number>()
+
+  return (data || []).reduce((counts, follow) => {
+    const agentId = String(follow.agent_id)
+    counts.set(agentId, (counts.get(agentId) || 0) + 1)
+    return counts
+  }, new Map<string, number>())
+}
+
+async function loadUserFollowingSet(client: typeof supabase, userId: string) {
+  const { data, error } = await client
+    .from("agent_follows")
+    .select("agent_id")
+    .eq("user_id", userId)
+    .eq("status", "active")
+
+  if (error) return new Set<string>()
+
+  return new Set((data || []).map((follow) => String(follow.agent_id)))
+}
+
+function createAuthedClient(request: Request) {
+  const authorization = request.headers.get("authorization") || ""
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: authorization ? { Authorization: authorization } : {},
+    },
+  })
 }
 
 function resolveCreatorDisplayName(

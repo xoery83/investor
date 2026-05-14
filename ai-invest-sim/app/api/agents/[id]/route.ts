@@ -7,6 +7,15 @@ import {
   defaultWorkflowConfig,
 } from "../../../../src/lib/agents/default-config"
 import { generateInvestmentUniverse } from "../../../../src/lib/agents/investment-universe"
+import {
+  canActivateMoreAgents,
+  canEditAgent,
+  canFollowAgent,
+  canPublishAgent,
+  canRunAgent,
+  canTradeAgentPortfolio,
+  canViewAgent,
+} from "../../../../src/lib/auth/permissions"
 import { getRequestUser } from "../../../../src/lib/auth/server"
 import type {
   AgentInvestmentUniverse,
@@ -25,6 +34,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params
+  const requestUser = await getRequestUser(request)
 
   const { data: agent, error: agentError } = await supabase
     .from("agents")
@@ -36,6 +46,14 @@ export async function GET(
     return NextResponse.json(
       { success: false, error: "Agent not found" },
       { status: 404 }
+    )
+  }
+
+  const viewPermission = canViewAgent(requestUser, agent)
+  if (!viewPermission.allowed) {
+    return NextResponse.json(
+      { success: false, error: viewPermission.reason },
+      { status: 403 }
     )
   }
 
@@ -123,6 +141,12 @@ export async function GET(
     risk_policy: riskPolicy,
     workflow_config: workflowConfig,
     investment_universe: investmentUniverse,
+    permissions: {
+      canEdit: canEditAgent(requestUser, agent).allowed,
+      canRun: canRunAgent(requestUser, agent).allowed,
+      canTrade: canTradeAgentPortfolio(requestUser, agent).allowed,
+      canFollow: canFollowAgent(requestUser, agent).allowed,
+    },
     portfolio_summary: {
       cash_balance: cashBalance,
       holdings_value: holdingsValue,
@@ -211,11 +235,12 @@ export async function PATCH(
     description,
     philosophy,
     risk_level,
-    is_active,
     rebalance_frequency,
     model_name,
     visibility,
     lifecycle_status,
+    manual_trade_allowed,
+    proposal_execution_required,
     profile,
     risk_policy,
     workflow_config,
@@ -225,7 +250,7 @@ export async function PATCH(
 
   const { data: existingAgent, error: existingAgentError } = await supabase
     .from("agents")
-    .select("id, owner_user_id, visibility")
+    .select("*")
     .eq("id", id)
     .single()
 
@@ -236,14 +261,77 @@ export async function PATCH(
     )
   }
 
-  const isAdmin = requestUser.profile.role === "admin"
-  const isOwner = existingAgent.owner_user_id === requestUser.id
-
-  if (!isAdmin && !isOwner) {
+  const editPermission = canEditAgent(requestUser, existingAgent)
+  if (!editPermission.allowed) {
     return NextResponse.json(
-      { success: false, error: "You do not have permission to update this agent" },
+      { success: false, error: editPermission.reason },
       { status: 403 }
     )
+  }
+
+  const resolvedVisibility = resolveAgentVisibility(
+    visibility,
+    requestUser.profile.role,
+    existingAgent.visibility
+  )
+  const resolvedLifecycleStatus = lifecycle_status || "active"
+  const lifecyclePermission = await validateLifecycleTransition({
+    agent: existingAgent,
+    userId: requestUser.id,
+    nextVisibility: resolvedVisibility,
+    nextLifecycleStatus: resolvedLifecycleStatus,
+  })
+
+  if (!lifecyclePermission.allowed) {
+    return NextResponse.json(
+      { success: false, error: lifecyclePermission.reason },
+      { status: 403 }
+    )
+  }
+
+  if (
+    resolvedVisibility === "public" &&
+    existingAgent.visibility !== "public"
+  ) {
+    const publishPermission = canPublishAgent(requestUser)
+    if (!publishPermission.allowed) {
+      return NextResponse.json(
+        { success: false, error: publishPermission.reason },
+        { status: 403 }
+      )
+    }
+  }
+
+  if (
+    resolvedLifecycleStatus === "active" &&
+    existingAgent.lifecycle_status !== "active"
+  ) {
+    const { count: activeAgentCount, error: activeAgentCountError } =
+      await supabase
+        .from("agents")
+        .select("id", { count: "exact", head: true })
+        .eq("owner_user_id", requestUser.id)
+        .eq("lifecycle_status", "active")
+        .neq("id", id)
+
+    if (activeAgentCountError) {
+      return NextResponse.json(
+        { success: false, error: activeAgentCountError.message },
+        { status: 500 }
+      )
+    }
+
+    const activatePermission = canActivateMoreAgents({
+      user: requestUser,
+      activeAgentCount: activeAgentCount || 0,
+    })
+
+    if (!activatePermission.allowed) {
+      return NextResponse.json(
+        { success: false, error: activatePermission.reason },
+        { status: 403 }
+      )
+    }
   }
 
   const { data, error } = await supabase
@@ -253,15 +341,19 @@ export async function PATCH(
       description,
       philosophy,
       risk_level,
-      is_active,
       rebalance_frequency,
       model_name,
-      visibility: resolveAgentVisibility(
-        visibility,
-        requestUser.profile.role,
-        existingAgent.visibility
-      ),
-      lifecycle_status: lifecycle_status || "active",
+      visibility: resolvedVisibility,
+      lifecycle_status: resolvedLifecycleStatus,
+      is_active: resolvedLifecycleStatus === "active",
+      manual_trade_allowed:
+        manual_trade_allowed === undefined
+          ? existingAgent.manual_trade_allowed
+          : Boolean(manual_trade_allowed),
+      proposal_execution_required:
+        proposal_execution_required === undefined
+          ? existingAgent.proposal_execution_required
+          : Boolean(proposal_execution_required),
       updated_at: now,
     })
     .eq("id", id)
@@ -345,10 +437,111 @@ export async function PATCH(
     })
   }
 
+  await syncFollowStatusForLifecycle(id, resolvedLifecycleStatus)
+
   return NextResponse.json({
     success: true,
     agent: data,
   })
+}
+
+async function validateLifecycleTransition({
+  agent,
+  userId,
+  nextVisibility,
+  nextLifecycleStatus,
+}: {
+  agent: Record<string, unknown>
+  userId: string
+  nextVisibility: string
+  nextLifecycleStatus: string
+}) {
+  const currentVisibility = String(agent.visibility || "private")
+  const hasFollowers =
+    currentVisibility === "public" || currentVisibility === "system"
+      ? await agentHasFollowers(String(agent.id))
+      : false
+
+  if (
+    hasFollowers &&
+    currentVisibility === "public" &&
+    nextVisibility === "private"
+  ) {
+    return {
+      allowed: false,
+      reason:
+        "Public agents with followers cannot be made private. Pause or retire the agent first.",
+    }
+  }
+
+  if (hasFollowers && ["draft", "archived"].includes(nextLifecycleStatus)) {
+    return {
+      allowed: false,
+      reason:
+        "Agents with followers cannot move directly to draft or archived.",
+    }
+  }
+
+  if (
+    String(agent.lifecycle_status) === "archived" &&
+    nextLifecycleStatus !== "archived"
+  ) {
+    return {
+      allowed: false,
+      reason: "Archived agents are read-only.",
+    }
+  }
+
+  if (
+    String(agent.lifecycle_status) === "retired" &&
+    nextLifecycleStatus === "active"
+  ) {
+    return {
+      allowed: false,
+      reason: "Retired agents cannot return to active without admin override.",
+    }
+  }
+
+  void userId
+  return { allowed: true }
+}
+
+async function agentHasFollowers(agentId: string) {
+  const { count, error } = await supabase
+    .from("agent_follows")
+    .select("id", { count: "exact", head: true })
+    .eq("agent_id", agentId)
+    .in("status", ["active", "paused_by_agent"])
+
+  if (error) return false
+  return Boolean(count && count > 0)
+}
+
+async function syncFollowStatusForLifecycle(
+  agentId: string,
+  lifecycleStatus: string
+) {
+  if (lifecycleStatus === "paused" || lifecycleStatus === "retired") {
+    await supabase
+      .from("agent_follows")
+      .update({
+        status: "paused_by_agent",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("agent_id", agentId)
+      .eq("status", "active")
+  }
+
+  if (lifecycleStatus === "active") {
+    await supabase
+      .from("agent_follows")
+      .update({
+        status: "active",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("agent_id", agentId)
+      .eq("status", "paused_by_agent")
+  }
 }
 
 async function regenerateInvestmentUniverse({

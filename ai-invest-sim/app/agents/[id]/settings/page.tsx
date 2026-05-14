@@ -14,6 +14,8 @@ type AgentForm = {
   visibility: string
   lifecycle_status: string
   is_active: boolean
+  manual_trade_allowed: boolean
+  proposal_execution_required: boolean
   rebalance_frequency: string
   model_name: string
 }
@@ -70,6 +72,8 @@ const defaultAgentForm: AgentForm = {
   visibility: "private",
   lifecycle_status: "active",
   is_active: true,
+  manual_trade_allowed: true,
+  proposal_execution_required: false,
   rebalance_frequency: "daily",
   model_name: "gpt-4.1-mini",
 }
@@ -174,6 +178,8 @@ export default function AgentSettingsPage() {
         visibility: String(agent.visibility || "private"),
         lifecycle_status: String(agent.lifecycle_status || "active"),
         is_active: Boolean(agent.is_active),
+        manual_trade_allowed: agent.manual_trade_allowed !== false,
+        proposal_execution_required: Boolean(agent.proposal_execution_required),
         rebalance_frequency: String(agent.rebalance_frequency || "daily"),
         model_name: String(agent.model_name || "gpt-4.1-mini"),
       })
@@ -398,12 +404,188 @@ export default function AgentSettingsPage() {
   const isOwner = Boolean(currentUser && agentOwnerId === currentUser.id)
   const canPublish = isAdmin || userRole === "pro"
   const canUseSystemVisibility = isAdmin
+  const canEditSettings = isAdmin || isOwner
   const visibilityOptions: [string, string][] = [
     ["private", "Private"],
     ...(canPublish ? [["public", "Public"] as [string, string]] : []),
     ...(canUseSystemVisibility ? [["system", "System"] as [string, string]] : []),
   ]
   const canEditLifecycle = isAdmin || isOwner
+
+  if (!canEditSettings) {
+    return (
+      <main className="min-h-screen bg-slate-950 p-8 text-white">
+        <div className="mx-auto w-full max-w-5xl">
+          <div className="mb-6">
+            <Link href={`/agents/${id}`} className="text-sm text-blue-400">
+              ← Back to Dashboard
+            </Link>
+          </div>
+
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold">Agent Settings</h1>
+            <p className="mt-2 text-slate-400">
+              This agent can be viewed, but only the owner or an admin can edit its configuration.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 uppercase tracking-wide text-slate-300">
+                Role: {userRole}
+              </span>
+              <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-400">
+                Limited access
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <SettingsSection
+              title="Basic Agent"
+              description="Read-only identity and publication details."
+            >
+              <ReadOnlyField label="Agent Name" value={agentForm.name} />
+              <ReadOnlyField
+                label="Description"
+                value={agentForm.description || "No description"}
+              />
+              <ReadOnlyField
+                label="Investment Philosophy"
+                value={agentForm.philosophy || "No philosophy defined."}
+              />
+              <div className="grid gap-4 md:grid-cols-3">
+                <ReadOnlyField label="Risk Level" value={agentForm.risk_level} />
+                <ReadOnlyField
+                  label="Rebalance Frequency"
+                  value={agentForm.rebalance_frequency}
+                />
+                <ReadOnlyField label="Model" value={agentForm.model_name} />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ReadOnlyField label="Visibility" value={agentForm.visibility} />
+                <ReadOnlyField
+                  label="Lifecycle Status"
+                  value={agentForm.lifecycle_status}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ReadOnlyField
+                  label="Manual Trade"
+                  value={agentForm.manual_trade_allowed ? "Allowed" : "Disabled"}
+                />
+                <ReadOnlyField
+                  label="Proposal Execution"
+                  value={
+                    agentForm.proposal_execution_required
+                      ? "Required"
+                      : "Optional"
+                  }
+                />
+              </div>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Investment Profile"
+              description="Read-only market scope, objectives, and manager preferences."
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <ReadOnlyField
+                  label="Strategy Type"
+                  value={profileForm.strategy_type}
+                />
+                <ReadOnlyField label="Objective" value={profileForm.objective} />
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <ReadOnlyField
+                  label="Target Return Min %"
+                  value={profileForm.target_annual_return_min}
+                />
+                <ReadOnlyField
+                  label="Target Return Max %"
+                  value={profileForm.target_annual_return_max}
+                />
+                <ReadOnlyField
+                  label="Max Drawdown %"
+                  value={profileForm.max_drawdown_pct}
+                />
+              </div>
+              <ReadOnlyField
+                label="Target Markets"
+                value={profileForm.target_markets || "Not configured"}
+              />
+              <ReadOnlyField
+                label="Allowed Assets"
+                value={profileForm.allowed_assets || "Not configured"}
+              />
+              <ReadOnlyField
+                label="Excluded Assets"
+                value={profileForm.excluded_assets || "None"}
+              />
+              <ReadOnlyField
+                label="Manager Instructions"
+                value={profileForm.manager_instructions || "None"}
+              />
+            </SettingsSection>
+
+            <SettingsSection
+              title="Risk Policy"
+              description="Read-only limits used by the local validator."
+            >
+              <div className="grid gap-4 md:grid-cols-4">
+                <ReadOnlyField label="Min Cash %" value={riskForm.min_cash_pct} />
+                <ReadOnlyField label="Max Cash %" value={riskForm.max_cash_pct} />
+                <ReadOnlyField
+                  label="Max Single Stock %"
+                  value={riskForm.max_single_stock_pct}
+                />
+                <ReadOnlyField label="Max ETF %" value={riskForm.max_etf_pct} />
+                <ReadOnlyField
+                  label="Max One Trade %"
+                  value={riskForm.max_one_trade_pct}
+                />
+                <ReadOnlyField
+                  label="Max Weekly Turnover %"
+                  value={riskForm.max_weekly_turnover_pct}
+                />
+                <ReadOnlyField
+                  label="Max Drawdown %"
+                  value={riskForm.max_drawdown_pct}
+                />
+              </div>
+              <ReadOnlyField
+                label="Prohibited Assets"
+                value={riskForm.prohibited_assets || "None"}
+              />
+            </SettingsSection>
+
+            <SettingsSection
+              title="Workflow"
+              description="Read-only run module configuration."
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <ReadOnlyField
+                  label="Daily Routine"
+                  value={workflowForm.daily_enabled ? "Enabled" : "Disabled"}
+                />
+                <ReadOnlyField
+                  label="Weekly Deep Research"
+                  value={workflowForm.weekly_enabled ? "Enabled" : "Disabled"}
+                />
+                <ReadOnlyField
+                  label="Escalation Run"
+                  value={
+                    workflowForm.escalation_enabled ? "Enabled" : "Disabled"
+                  }
+                />
+                <ReadOnlyField
+                  label="Risk Validator"
+                  value={workflowForm.validator_enabled ? "Enabled" : "Disabled"}
+                />
+              </div>
+            </SettingsSection>
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 p-8 text-white">
@@ -525,6 +707,7 @@ export default function AgentSettingsPage() {
                 value={agentForm.lifecycle_status}
                 onChange={(value) => updateAgent("lifecycle_status", value)}
                 options={[
+                  ["draft", "Draft"],
                   ["active", "Active"],
                   ["paused", "Paused"],
                   ["retired", "Retired"],
@@ -534,14 +717,26 @@ export default function AgentSettingsPage() {
                 hint="Retired agents stop accepting new followers in the future; archived agents are historical."
               />
             </div>
-            <ToggleRow
-              label="Agent Status"
-              description="Paused agents stay visible but will be skipped by future scheduled runs."
-              checked={agentForm.is_active}
-              onChange={(value) => updateAgent("is_active", value)}
-              checkedLabel="Active"
-              uncheckedLabel="Paused"
-            />
+            <div className="grid gap-4 md:grid-cols-2">
+              <ToggleRow
+                label="Manual Trade"
+                description="When disabled, holdings must be changed through approved rebalance proposals."
+                checked={agentForm.manual_trade_allowed}
+                onChange={(value) => updateAgent("manual_trade_allowed", value)}
+                checkedLabel="Allowed"
+                uncheckedLabel="Disabled"
+              />
+              <ToggleRow
+                label="Proposal Execution"
+                description="When required, public execution must come from a validated trade proposal."
+                checked={agentForm.proposal_execution_required}
+                onChange={(value) =>
+                  updateAgent("proposal_execution_required", value)
+                }
+                checkedLabel="Required"
+                uncheckedLabel="Optional"
+              />
+            </div>
           </SettingsSection>
 
           <SettingsSection
@@ -997,6 +1192,17 @@ function TextField({
       />
       {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
     </label>
+  )
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="mb-2 text-sm text-slate-500">{label}</p>
+      <div className="min-h-10 whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-2 text-slate-200">
+        {value}
+      </div>
+    </div>
   )
 }
 

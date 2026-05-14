@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
+import { canTradeAgentPortfolio } from "../../../../../src/lib/auth/permissions"
+import { getRequestUser } from "../../../../../src/lib/auth/server"
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
@@ -11,6 +14,15 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params
+  const requestUser = await getRequestUser(request)
+
+  if (!requestUser) {
+    return NextResponse.json(
+      { success: false, error: "Login required to trade agent holdings" },
+      { status: 401 }
+    )
+  }
+
   const body = await request.json()
 
   const {
@@ -49,6 +61,14 @@ export async function POST(
     return NextResponse.json(
       { success: false, error: "Agent not found" },
       { status: 404 }
+    )
+  }
+
+  const tradePermission = canTradeAgentPortfolio(requestUser, agent)
+  if (!tradePermission.allowed) {
+    return NextResponse.json(
+      { success: false, error: tradePermission.reason },
+      { status: 403 }
     )
   }
 

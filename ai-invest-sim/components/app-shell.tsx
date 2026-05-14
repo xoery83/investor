@@ -219,7 +219,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             ) : (
               <Link
-                href="/auth/login"
+                href={loginHref(pathname)}
                 title={collapsed ? "Log in" : undefined}
                 className={cn(
                   "flex w-full items-center rounded-xl border border-primary/30 bg-primary/10 text-sm text-primary hover:bg-primary/15",
@@ -259,4 +259,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
     </div>
   )
+}
+
+function loginHref(pathname: string) {
+  const next = pathname && pathname !== "/auth/login" ? pathname : "/agents"
+  return `/auth/login?next=${encodeURIComponent(next)}`
 }

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
 import { calculateAndStoreValuation } from "../../../../../src/lib/agents/calculate-valuation"
+import { canEditAgent } from "../../../../../src/lib/auth/permissions"
+import { getRequestUser } from "../../../../../src/lib/auth/server"
 import { getCachedPrice } from "../../../../../src/lib/market/get-cached-price"
 import type {
   Agent,
@@ -20,6 +22,14 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params
+  const requestUser = await getRequestUser(request)
+
+  if (!requestUser) {
+    return NextResponse.json(
+      { success: false, error: "Login required to refresh valuation" },
+      { status: 401 }
+    )
+  }
 
   const { data: agent, error: agentError } = await supabase
     .from("agents")
@@ -31,6 +41,14 @@ export async function POST(
     return NextResponse.json(
       { success: false, error: "Agent not found" },
       { status: 404 }
+    )
+  }
+
+  const editPermission = canEditAgent(requestUser, agent)
+  if (!editPermission.allowed) {
+    return NextResponse.json(
+      { success: false, error: editPermission.reason },
+      { status: 403 }
     )
   }
 

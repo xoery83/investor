@@ -4,6 +4,8 @@ import * as React from "react"
 import Link from "next/link"
 
 import AgentPortfolioPanel, { type PortfolioSummary } from "./AgentPortfolioPanel"
+import AgentEtfTradePanel from "./AgentEtfTradePanel"
+import FollowAgentButton from "./FollowAgentButton"
 import type { TradeDraft } from "./AgentPortfolioPanel"
 import RunAgentButton from "./RunAgentButton"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
@@ -18,6 +20,13 @@ import type {
   WorkflowConfig,
 } from "../../../src/lib/types/agent"
 
+type AgentDashboardPermissions = {
+  canEdit: boolean
+  canRun: boolean
+  canTrade: boolean
+  canFollow: boolean
+}
+
 type AgentDashboardClientProps = {
   agent: Agent
   holdings: AgentHolding[]
@@ -27,6 +36,7 @@ type AgentDashboardClientProps = {
   profile: AgentProfile
   riskPolicy: RiskPolicy
   workflowConfig: WorkflowConfig
+  permissions: AgentDashboardPermissions
   initialSummary: PortfolioSummary
 }
 
@@ -39,6 +49,7 @@ export default function AgentDashboardClient({
   profile,
   riskPolicy,
   workflowConfig,
+  permissions,
   initialSummary,
 }: AgentDashboardClientProps) {
   const [summary, setSummary] = React.useState(initialSummary)
@@ -123,24 +134,20 @@ export default function AgentDashboardClient({
           </div>
 
           <div className="flex gap-3">
-            <RunAgentButton agentId={agent.id} />
+            <FollowAgentButton
+              agentId={agent.id}
+              visible={permissions.canFollow}
+            />
+            {permissions.canRun && <RunAgentButton agentId={agent.id} />}
 
-            <Link
-              href={`/agents/${agent.id}/settings`}
-              className="bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg"
-            >
-              Settings
-            </Link>
-
-            <span
-              className={`px-3 py-2 rounded-lg text-sm ${
-                agent.is_active
-                  ? "bg-green-900 text-green-300"
-                  : "bg-slate-800 text-slate-400"
-              }`}
-            >
-              {agent.is_active ? "Active" : "Paused"}
-            </span>
+            {permissions.canEdit && (
+              <Link
+                href={`/agents/${agent.id}/settings`}
+                className="bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg"
+              >
+                Settings
+              </Link>
+            )}
           </div>
         </div>
 
@@ -165,6 +172,11 @@ export default function AgentDashboardClient({
             value={formatCurrency(summary.holdings_value)}
           />
         </section>
+
+        <AgentEtfTradePanel
+          agentId={agent.id}
+          visible={permissions.canFollow}
+        />
 
         <section className="mb-8 rounded-xl border border-slate-800 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -282,8 +294,10 @@ export default function AgentDashboardClient({
             totalValue={summary.total_value}
             onUseHolding={loadHoldingIntoTradeForm}
             onHoldingsUpdated={setCurrentHoldings}
-            onSummaryUpdated={setSummary}
-          />
+          onSummaryUpdated={setSummary}
+          canTrade={permissions.canTrade}
+          canRefreshValuation={permissions.canEdit}
+        />
         </div>
 
         <section className="border border-slate-800 rounded-xl p-6 mt-8">

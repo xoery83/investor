@@ -1,8 +1,11 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useParams } from "next/navigation"
+
 import AgentDashboardClient from "./AgentDashboardClient"
-
-import { headers } from "next/headers"
-
+import { supabase } from "../../../src/lib/supabase"
 import type {
   Agent,
   AgentValuation,
@@ -13,6 +16,13 @@ import type {
   TradeProposalWithValidation,
   WorkflowConfig,
 } from "../../../src/lib/types/agent"
+
+export type AgentDashboardPermissions = {
+  canEdit: boolean
+  canRun: boolean
+  canTrade: boolean
+  canFollow: boolean
+}
 
 type AgentDetailResponse = {
   success: boolean
@@ -26,6 +36,7 @@ type AgentDetailResponse = {
   profile: AgentProfile
   risk_policy: RiskPolicy
   workflow_config: WorkflowConfig
+  permissions?: AgentDashboardPermissions
   portfolio_summary?: {
     cash_balance: number
     holdings_value: number
@@ -34,41 +45,59 @@ type AgentDetailResponse = {
   error?: string
 }
 
-async function getAgent(id: string): Promise<AgentDetailResponse | null> {
-  const headersList = await headers()
-  const host = headersList.get("host")
+export default function AgentDashboardPage() {
+  const params = useParams()
+  const id = params.id as string
+  const [data, setData] = useState<AgentDetailResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
 
-  const protocol =
-    process.env.NODE_ENV === "production"
-      ? "https"
-      : "http"
+  useEffect(() => {
+    let cancelled = false
 
-  const res = await fetch(
-    `${protocol}://${host}/api/agents/${id}`,
-    {
-      cache: "no-store",
+    async function loadAgent() {
+      setLoading(true)
+      setError("")
+
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      const res = await fetch(`/api/agents/${id}`, {
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      const payload = (await res.json()) as AgentDetailResponse
+
+      if (cancelled) return
+
+      if (!res.ok || !payload.success) {
+        setError(payload.error || "Agent not found.")
+        setData(null)
+      } else {
+        setData(payload)
+      }
+
+      setLoading(false)
     }
-  )
 
-  if (!res.ok) {
-    return null
+    loadAgent()
+
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-950 p-8 text-white">
+        Loading agent...
+      </main>
+    )
   }
-
-  return (await res.json()) as AgentDetailResponse
-}
-
-export default async function AgentDashboardPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
-  const { id } = await params
-  const data = await getAgent(id)
 
   if (!data?.success) {
     return (
-      <main className="min-h-screen bg-slate-950 text-white p-8">
-        <p>Agent not found.</p>
+      <main className="min-h-screen bg-slate-950 p-8 text-white">
+        <p>{error || "Agent not found."}</p>
         <Link href="/agents" className="text-blue-400">
           Back to Agents
         </Link>
@@ -98,6 +127,14 @@ export default async function AgentDashboardPage({
       profile={profile}
       riskPolicy={risk_policy}
       workflowConfig={workflow_config}
+      permissions={
+        data.permissions || {
+          canEdit: false,
+          canRun: false,
+          canTrade: false,
+          canFollow: false,
+        }
+      }
       initialSummary={{
         cash_balance: portfolio_summary?.cash_balance ?? agent.cash_balance ?? 0,
         holdings_value: portfolio_summary?.holdings_value ?? 0,

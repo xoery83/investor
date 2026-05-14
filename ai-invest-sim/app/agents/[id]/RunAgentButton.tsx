@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import type { AgentRunType } from "../../../src/lib/types/agent"
+import { supabase } from "../../../src/lib/supabase"
 
 export default function RunAgentButton({ agentId }: { agentId: string }) {
   const router = useRouter()
@@ -13,10 +14,20 @@ export default function RunAgentButton({ agentId }: { agentId: string }) {
     setLoadingType(runType)
     setError("")
 
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in before running this agent.")
+      setLoadingType(null)
+      return
+    }
+
     const res = await fetch(`/api/agents/${agentId}/run`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         run_type: runType,

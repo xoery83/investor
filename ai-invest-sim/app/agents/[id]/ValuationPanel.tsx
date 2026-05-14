@@ -14,6 +14,7 @@ import {
 } from "recharts"
 
 import { Button } from "../../../components/ui/button"
+import { supabase } from "../../../src/lib/supabase"
 import type { PortfolioSummary } from "./AgentPortfolioPanel"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
 import type { AgentValuation } from "../../../src/lib/types/agent"
@@ -22,6 +23,7 @@ type ValuationPanelProps = {
   agentId: string
   initialValuations: AgentValuation[]
   embedded?: boolean
+  canRefresh?: boolean
   onHoldingsUpdated?: (holdings: UpdatedHolding[]) => void
   onSummaryUpdated?: (summary: PortfolioSummary) => void
 }
@@ -52,6 +54,7 @@ export default function ValuationPanel({
   agentId,
   initialValuations,
   embedded = false,
+  canRefresh = false,
   onHoldingsUpdated,
   onSummaryUpdated,
 }: ValuationPanelProps) {
@@ -62,12 +65,22 @@ export default function ValuationPanel({
   const [error, setError] = React.useState("")
 
   const refreshValuation = React.useCallback(async () => {
+    if (!canRefresh) return
+
     setIsRefreshing(true)
     setError("")
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+
+      if (!token) {
+        throw new Error("Please log in before refreshing valuation.")
+      }
+
       const response = await fetch(`/api/agents/${agentId}/valuation`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
       })
       const payload = (await response.json()) as ValuationResponse
 
@@ -96,9 +109,11 @@ export default function ValuationPanel({
     } finally {
       setIsRefreshing(false)
     }
-  }, [agentId, onHoldingsUpdated, onSummaryUpdated])
+  }, [agentId, canRefresh, onHoldingsUpdated, onSummaryUpdated])
 
   React.useEffect(() => {
+    if (!canRefresh) return
+
     const initialRefresh = window.setTimeout(refreshValuation, 0)
     const interval = window.setInterval(refreshValuation, REFRESH_INTERVAL_MS)
 
@@ -106,7 +121,7 @@ export default function ValuationPanel({
       window.clearTimeout(initialRefresh)
       window.clearInterval(interval)
     }
-  }, [refreshValuation])
+  }, [canRefresh, refreshValuation])
 
   const chartData = buildChartData(valuations, range)
   const chartDomain = getValueDomain(chartData.map((point) => point.value))
@@ -126,7 +141,9 @@ export default function ValuationPanel({
         <div>
           <h2 className="text-xl font-semibold">Valuation History</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Auto-refreshes every 60 seconds while this dashboard is open.
+            {canRefresh
+              ? "Auto-refreshes every 60 seconds while this dashboard is open."
+              : "Showing stored valuation history. Refresh is limited to owners and admins."}
           </p>
         </div>
 
@@ -152,7 +169,7 @@ export default function ValuationPanel({
             type="button"
             variant="outline"
             onClick={refreshValuation}
-            disabled={isRefreshing}
+            disabled={isRefreshing || !canRefresh}
             className="gap-2 border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
           >
             <RefreshCw className={isRefreshing ? "size-4 animate-spin" : "size-4"} />
