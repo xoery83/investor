@@ -12,6 +12,7 @@ type AgentListItem = Agent & {
   creator_role?: string
   follower_count?: number
   is_following?: boolean
+  follower_position_value?: number
 }
 
 type SourceFilter = "all" | "system" | "user"
@@ -33,17 +34,24 @@ export default function AgentsPage() {
   const [followingFilter, setFollowingFilter] =
     useState<FollowingFilter>("all")
   const [searchQuery, setSearchQuery] = useState("")
+  const [creatorFilter] = useState(() => {
+    if (typeof window === "undefined") return ""
+    return new URLSearchParams(window.location.search).get("creator") || ""
+  })
   const inFlightRequestKey = useRef<string | null>(null)
 
-  const loadAgents = useCallback(async (token: string | null) => {
-    const cacheKey = token ? "agents:list:auth" : "agents:list:anon"
-    const requestKey = token || "anonymous"
+  const loadAgents = useCallback(async (token: string | null, userId?: string) => {
+    const cacheKey = token && userId
+      ? `agents:list:auth:${userId}`
+      : "agents:list:anon"
+    const requestKey = userId || token || "anonymous"
     const cached = readAgentsCache(cacheKey)
 
     if (cached) {
       setAgents(cached)
       setLoading(false)
-      return
+    } else {
+      setLoading(true)
     }
 
     if (inFlightRequestKey.current === requestKey) {
@@ -51,13 +59,15 @@ export default function AgentsPage() {
     }
 
     inFlightRequestKey.current = requestKey
-    setLoading(true)
     setError("")
 
     try {
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {}
       const res = await fetch("/api/agents", {
         cache: "no-store",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
       })
       const data = await res.json()
 
@@ -81,7 +91,10 @@ export default function AgentsPage() {
     async function load() {
       const { data } = await supabase.auth.getSession()
       setUser(data.session?.user || null)
-      await loadAgents(data.session?.access_token || null)
+      await loadAgents(
+        data.session?.access_token || null,
+        data.session?.user?.id
+      )
     }
 
     load()
@@ -90,7 +103,7 @@ export default function AgentsPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || null)
-      loadAgents(session?.access_token || null)
+      loadAgents(session?.access_token || null, session?.user?.id)
     })
 
     return () => subscription.unsubscribe()
@@ -119,10 +132,12 @@ export default function AgentsPage() {
           return false
         }
         if (query && !agentMatchesQuery(agent, query)) return false
+        if (creatorFilter && agent.owner_user_id !== creatorFilter) return false
         return true
       }),
     [
       agents,
+      creatorFilter,
       followingFilter,
       lifecycleFilter,
       searchQuery,
@@ -136,7 +151,7 @@ export default function AgentsPage() {
   )
 
   return (
-    <main className="min-h-screen bg-slate-950 p-8 text-white">
+    <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-6xl">
         <div className="mb-8 flex items-center justify-between gap-4">
           <div>
@@ -160,7 +175,7 @@ export default function AgentsPage() {
                     setUser(null)
                     await loadAgents(null)
                   }}
-                  className="rounded-lg border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-900"
+                  className="rounded-lg border border-blue-200 bg-white/70 px-4 py-2 text-slate-700 hover:bg-blue-50"
                 >
                   Sign out
                 </button>
@@ -168,14 +183,14 @@ export default function AgentsPage() {
             ) : (
               <Link
                 href="/auth/login?next=%2Fagents"
-                className="rounded-lg border border-slate-700 px-4 py-2 text-slate-300 hover:bg-slate-900"
+                className="rounded-lg border border-blue-200 bg-white/70 px-4 py-2 text-slate-700 hover:bg-blue-50"
               >
                 Log in
               </Link>
             )}
             <Link
               href="/agents/new"
-              className="rounded-lg bg-blue-600 px-4 py-2 hover:bg-blue-700"
+              className="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
             >
               Create Agent
             </Link>
@@ -196,8 +211,21 @@ export default function AgentsPage() {
           onSearchChange={setSearchQuery}
         />
 
+        {creatorFilter && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm">
+            <span className="text-blue-800">
+              Showing agents by{" "}
+              {agents.find((agent) => agent.owner_user_id === creatorFilter)
+                ?.creator_display_name || "selected creator"}
+            </span>
+            <Link href="/agents" className="text-blue-600 hover:text-blue-700">
+              Clear creator filter
+            </Link>
+          </div>
+        )}
+
         {error && (
-          <div className="mb-6 rounded-lg border border-red-800 bg-red-950 p-3 text-red-300">
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-red-700">
             {error}
           </div>
         )}
@@ -205,7 +233,7 @@ export default function AgentsPage() {
         {loading ? (
           <p className="text-slate-400">Loading agents...</p>
         ) : agents.length === 0 ? (
-          <div className="rounded-xl border border-slate-800 p-8 text-center">
+          <div className="rounded-xl border border-blue-200 bg-white/60 p-8 text-center">
             <p className="text-slate-400">
               {user
                 ? "No visible agents yet."
@@ -213,13 +241,13 @@ export default function AgentsPage() {
             </p>
             <Link
               href={user ? "/agents/new" : "/auth/login?next=%2Fagents"}
-              className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 hover:bg-blue-700"
+              className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
             >
               {user ? "Create your first Agent" : "Log in"}
             </Link>
           </div>
         ) : filteredAgents.length === 0 ? (
-          <div className="rounded-xl border border-slate-800 p-8 text-center">
+          <div className="rounded-xl border border-blue-200 bg-white/60 p-8 text-center">
             <p className="text-slate-400">
               No agents match the selected filters.
             </p>
@@ -228,7 +256,7 @@ export default function AgentsPage() {
           <div className="space-y-8">
             <AgentSection
               title="System & Admin Agents"
-              description="Platform-managed agents and admin-created public/system agents."
+              description="Platform-managed agents and admin-created discoverable agents. Only public agents can be followed."
               agents={systemAgents}
               emptyMessage="No system or admin agents match the selected filters."
             />
@@ -271,7 +299,7 @@ function AgentFilters({
   onSearchChange: (value: string) => void
 }) {
   return (
-    <section className="mb-6 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+    <section className="mb-6 rounded-xl border border-blue-200 bg-white/75 p-4 shadow-sm shadow-blue-100/60">
       <div className="mb-3 grid gap-3 md:grid-cols-[1.3fr_0.7fr]">
         <label className="block">
           <span className="mb-2 block text-xs uppercase tracking-widest text-slate-500">
@@ -281,7 +309,7 @@ function AgentFilters({
             value={searchQuery}
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder="Search name, description, creator, risk, frequency..."
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-blue-500"
+            className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           />
         </label>
         <FilterSelect
@@ -357,7 +385,7 @@ function FilterSelect({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
-        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-500"
+        className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
       >
         {options.map(([optionValue, optionLabel]) => (
           <option key={optionValue} value={optionValue}>
@@ -387,13 +415,13 @@ function AgentSection({
           <h2 className="text-xl font-semibold">{title}</h2>
           <p className="mt-1 text-sm text-slate-500">{description}</p>
         </div>
-        <span className="rounded-md border border-slate-800 px-2 py-1 text-xs text-slate-400">
+        <span className="rounded-md border border-blue-200 bg-white/70 px-2 py-1 text-xs text-slate-500">
           {agents.length} agent{agents.length === 1 ? "" : "s"}
         </span>
       </div>
 
       {agents.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-800 p-6 text-sm text-slate-500">
+        <div className="rounded-xl border border-dashed border-blue-200 bg-white/40 p-6 text-sm text-slate-500">
           {emptyMessage}
         </div>
       ) : (
@@ -409,17 +437,19 @@ function AgentSection({
 
 function AgentCard({ agent }: { agent: AgentListItem }) {
   return (
-    <Link
-      href={`/agents/${agent.id}`}
-      className="rounded-xl border border-slate-800 p-6 transition hover:border-blue-500"
-    >
+    <article className="rounded-xl border border-blue-200 bg-white/70 p-6 shadow-sm shadow-blue-100/50 transition hover:border-blue-400 hover:bg-white">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h3 className="text-xl font-semibold">{agent.name}</h3>
+        <Link
+          href={`/agents/${agent.id}`}
+          className="text-xl font-semibold text-slate-900 hover:text-blue-600"
+        >
+          {agent.name}
+        </Link>
         <span
           className={`rounded px-2 py-1 text-xs ${
             agent.lifecycle_status === "active"
-              ? "bg-green-900 text-green-300"
-              : "bg-slate-800 text-slate-400"
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-slate-100 text-slate-500"
           }`}
         >
           {formatToken(agent.lifecycle_status || "paused")}
@@ -428,12 +458,29 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
 
       <div className="mb-4 flex flex-wrap gap-2">
         <AgentPill value={agent.visibility || "private"} />
-        <AgentPill value={agent.creator_type || "user"} />
         {agent.creator_role && <AgentPill value={agent.creator_role} />}
         {agent.is_following && <AgentPill value="following" />}
       </div>
 
-      <p className="mb-4 min-h-10 text-sm text-slate-400">
+      <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-sm">
+        <p className="text-xs uppercase tracking-widest text-slate-500">
+          Creator
+        </p>
+        {agent.owner_user_id ? (
+          <Link
+            href={`/agents?creator=${agent.owner_user_id}`}
+            className="mt-1 inline-block text-blue-600 hover:text-blue-700"
+          >
+            {agent.creator_display_name || "Unknown user"}
+          </Link>
+        ) : (
+          <p className="mt-1 text-slate-700">
+            {agent.creator_display_name || "System"}
+          </p>
+        )}
+      </div>
+
+      <p className="mb-4 min-h-10 text-sm text-slate-600">
         {agent.description || "No description"}
       </p>
 
@@ -443,23 +490,23 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
           value={`$${Number(agent.current_value).toLocaleString()}`}
         />
         <AgentMetric
-          label="Creator"
-          value={agent.creator_display_name || "Unknown user"}
-        />
-        <AgentMetric
           label="Followers"
           value={String(agent.follower_count || 0)}
+        />
+        <AgentMetric
+          label="Agent ETF Capital"
+          value={formatCurrency(Number(agent.follower_position_value || 0))}
         />
         <AgentMetric label="Risk" value={agent.risk_level} />
         <AgentMetric label="Frequency" value={agent.rebalance_frequency} />
       </div>
-    </Link>
+    </article>
   )
 }
 
 function AgentPill({ value }: { value: string }) {
   return (
-    <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs capitalize text-slate-300">
+    <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs capitalize text-slate-700">
       {formatToken(value)}
     </span>
   )
@@ -480,6 +527,14 @@ function isSystemOrAdminAgent(agent: AgentListItem) {
 
 function formatToken(value: string) {
   return value.replaceAll("_", " ")
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0))
 }
 
 function agentMatchesQuery(agent: AgentListItem, query: string) {
@@ -535,8 +590,11 @@ function clearAgentsCache() {
   if (typeof window === "undefined") return
 
   try {
-    window.sessionStorage.removeItem("agents:list:auth")
-    window.sessionStorage.removeItem("agents:list:anon")
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key === "agents:list:anon" || key.startsWith("agents:list:auth:")) {
+        window.sessionStorage.removeItem(key)
+      }
+    }
   } catch {
     // Cache clearing is best effort only.
   }

@@ -33,10 +33,9 @@ export function isOwner(user: RequestUser | null, agent: PermissionAgent) {
 }
 
 export function canViewAgent(user: RequestUser | null, agent: PermissionAgent) {
-  if (agent.visibility === "public" || agent.visibility === "system") {
-    return allow()
-  }
-  if (isAdmin(user) || isOwner(user, agent)) return allow()
+  if (isAdmin(user)) return allow()
+  if (agent.visibility === "public") return allow()
+  if (isOwner(user, agent) && agent.visibility !== "system") return allow()
   return deny("You do not have permission to view this agent.")
 }
 
@@ -68,15 +67,17 @@ export function canTradeAgentPortfolio(
 ) {
   const edit = canEditAgent(user, agent)
   if (!edit.allowed) return edit
+  if (agent.visibility === "public" || agent.visibility === "system") {
+    return deny(
+      "Public agents can only be traded through approved rebalance proposals."
+    )
+  }
   if (!["draft", "active"].includes(agent.lifecycle_status)) {
     return deny("Only draft or active agents can be rebalanced.")
   }
-  if (
-    (agent.visibility === "public" || agent.visibility === "system") &&
-    agent.manual_trade_allowed === false
-  ) {
+  if (agent.manual_trade_allowed === false) {
     return deny(
-      "Public agents can only be traded through approved rebalance proposals."
+      "This agent can only be traded through approved rebalance proposals."
     )
   }
   return allow()
@@ -87,11 +88,8 @@ export function canFollowAgent(user: RequestUser | null, agent: PermissionAgent)
   if (agent.lifecycle_status !== "active") {
     return deny("Only active agents can accept new followers.")
   }
-  if (agent.visibility !== "public" && agent.visibility !== "system") {
-    return deny("Only public or system agents can be followed.")
-  }
-  if (isOwner(user, agent)) {
-    return deny("You already own this agent.")
+  if (agent.visibility !== "public") {
+    return deny("Only public agents can be followed.")
   }
   return allow()
 }

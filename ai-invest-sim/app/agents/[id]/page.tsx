@@ -17,6 +17,8 @@ import type {
   WorkflowConfig,
 } from "../../../src/lib/types/agent"
 
+const AGENT_DETAIL_CACHE_TTL_MS = 20_000
+
 export type AgentDashboardPermissions = {
   canEdit: boolean
   canRun: boolean
@@ -28,6 +30,10 @@ type AgentDetailResponse = {
   success: boolean
   agent: Agent & {
     holdings_value?: number
+    creator_display_name?: string
+    creator_role?: string
+    follower_count?: number
+    follower_position_value?: number
   }
   holdings: AgentHolding[]
   runs: AgentRun[]
@@ -37,6 +43,7 @@ type AgentDetailResponse = {
   risk_policy: RiskPolicy
   workflow_config: WorkflowConfig
   permissions?: AgentDashboardPermissions
+  is_following?: boolean
   portfolio_summary?: {
     cash_balance: number
     holdings_value: number
@@ -56,14 +63,29 @@ export default function AgentDashboardPage() {
     let cancelled = false
 
     async function loadAgent() {
-      setLoading(true)
       setError("")
 
       const { data: sessionData } = await supabase.auth.getSession()
       const token = sessionData.session?.access_token
+      const cacheKey = getAgentDetailCacheKey(
+        id,
+        sessionData.session?.user?.id
+      )
+      const cached = readAgentDetailCache(cacheKey)
+
+      if (cached) {
+        setData(cached)
+        setLoading(false)
+      } else {
+        setLoading(true)
+      }
+
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {}
       const res = await fetch(`/api/agents/${id}`, {
         cache: "no-store",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
       })
       const payload = (await res.json()) as AgentDetailResponse
 
@@ -71,9 +93,10 @@ export default function AgentDashboardPage() {
 
       if (!res.ok || !payload.success) {
         setError(payload.error || "Agent not found.")
-        setData(null)
+        if (!cached) setData(null)
       } else {
         setData(payload)
+        writeAgentDetailCache(cacheKey, payload)
       }
 
       setLoading(false)
@@ -88,7 +111,7 @@ export default function AgentDashboardPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-950 p-8 text-white">
+      <main className="min-h-screen bg-background p-8 text-foreground">
         Loading agent...
       </main>
     )
@@ -96,7 +119,7 @@ export default function AgentDashboardPage() {
 
   if (!data?.success) {
     return (
-      <main className="min-h-screen bg-slate-950 p-8 text-white">
+      <main className="min-h-screen bg-background p-8 text-foreground">
         <p>{error || "Agent not found."}</p>
         <Link href="/agents" className="text-blue-400">
           Back to Agents
@@ -135,6 +158,7 @@ export default function AgentDashboardPage() {
           canFollow: false,
         }
       }
+      isFollowing={Boolean(data.is_following)}
       initialSummary={{
         cash_balance: portfolio_summary?.cash_balance ?? agent.cash_balance ?? 0,
         holdings_value: portfolio_summary?.holdings_value ?? 0,
@@ -142,4 +166,38 @@ export default function AgentDashboardPage() {
       }}
     />
   )
+}
+
+function getAgentDetailCacheKey(agentId: string, userId?: string) {
+  return `agents:detail:${agentId}:${userId || "anon"}`
+}
+
+function readAgentDetailCache(key: string) {
+  if (typeof window === "undefined") return null
+
+  try {
+    const cached = window.sessionStorage.getItem(key)
+    if (!cached) return null
+    const parsed = JSON.parse(cached) as {
+      savedAt: number
+      data: AgentDetailResponse
+    }
+    if (Date.now() - parsed.savedAt > AGENT_DETAIL_CACHE_TTL_MS) return null
+    return parsed.data
+  } catch {
+    return null
+  }
+}
+
+function writeAgentDetailCache(key: string, data: AgentDetailResponse) {
+  if (typeof window === "undefined") return
+
+  try {
+    window.sessionStorage.setItem(
+      key,
+      JSON.stringify({ savedAt: Date.now(), data })
+    )
+  } catch {
+    // Detail cache is best effort only.
+  }
 }

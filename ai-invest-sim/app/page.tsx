@@ -96,7 +96,7 @@ export default function Home() {
             detail={`${activeAgents.length} active`}
           />
           <MetricCard
-            label="Public/System Agents"
+            label="Discoverable Agents"
             value={loading ? "..." : String(systemAgents.length)}
             detail="Available to discover"
           />
@@ -126,7 +126,7 @@ export default function Home() {
               Build, follow, and simulate agent portfolios
             </CardTitle>
             <CardDescription className="max-w-3xl text-sm leading-relaxed">
-              Create private agents, discover public/system agents, follow them, and allocate simulated cash into Agent ETF positions.
+              Create private agents, discover public agents, follow them, and allocate simulated cash into Agent ETF positions.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">

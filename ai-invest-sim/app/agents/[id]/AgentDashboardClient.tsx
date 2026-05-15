@@ -28,7 +28,12 @@ type AgentDashboardPermissions = {
 }
 
 type AgentDashboardClientProps = {
-  agent: Agent
+  agent: Agent & {
+    creator_display_name?: string
+    creator_role?: string
+    follower_count?: number
+    follower_position_value?: number
+  }
   holdings: AgentHolding[]
   runs: AgentRun[]
   valuations: AgentValuation[]
@@ -37,6 +42,7 @@ type AgentDashboardClientProps = {
   riskPolicy: RiskPolicy
   workflowConfig: WorkflowConfig
   permissions: AgentDashboardPermissions
+  isFollowing: boolean
   initialSummary: PortfolioSummary
 }
 
@@ -50,9 +56,12 @@ export default function AgentDashboardClient({
   riskPolicy,
   workflowConfig,
   permissions,
+  isFollowing,
   initialSummary,
 }: AgentDashboardClientProps) {
   const [summary, setSummary] = React.useState(initialSummary)
+  const [followOverride, setFollowOverride] = React.useState<boolean | null>(null)
+  const [followerCountDelta, setFollowerCountDelta] = React.useState(0)
   const [currentHoldings, setCurrentHoldings] = React.useState<UpdatedHolding[]>(
     holdings.map((holding) => ({
       ...holding,
@@ -66,6 +75,12 @@ export default function AgentDashboardClient({
   >(null)
   const tradeSectionRef = React.useRef<HTMLDivElement | null>(null)
   const initialMarketValue = Number(agent.initial_capital || 0)
+  const followerPositionValue = Number(agent.follower_position_value || 0)
+  const displayFollowing = followOverride ?? isFollowing
+  const followerCount = Math.max(
+    0,
+    Number(agent.follower_count || 0) + followerCountDelta
+  )
   const valueChange = summary.total_value - initialMarketValue
   const valueChangePct =
     initialMarketValue > 0 ? (valueChange / initialMarketValue) * 100 : 0
@@ -81,6 +96,11 @@ export default function AgentDashboardClient({
       ),
     [tradeProposals]
   )
+
+  function handleFollowChange(nextFollowing: boolean) {
+    setFollowOverride(nextFollowing)
+    setFollowerCountDelta(nextFollowing === isFollowing ? 0 : nextFollowing ? 1 : -1)
+  }
 
   function loadTradeDraft(draft: Omit<TradeDraft, "key">) {
     setTradeDraft({
@@ -107,7 +127,7 @@ export default function AgentDashboardClient({
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white p-8">
+    <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto w-full max-w-[1500px]">
         <div className="mb-6">
           <Link href="/agents" className="text-blue-400 text-sm">
@@ -122,6 +142,10 @@ export default function AgentDashboardClient({
               {agent.description || "No description"}
             </p>
             <div className="mt-4 flex flex-wrap gap-3 text-sm">
+              <StatusPill value={agent.visibility} />
+              <StatusPill value={agent.lifecycle_status} />
+              <StatusPill value={agent.creator_role || agent.creator_type} />
+              {displayFollowing && <StatusPill value="following" />}
               <MetaPill
                 label="Created"
                 value={formatDateTime(agent.created_at)}
@@ -130,20 +154,31 @@ export default function AgentDashboardClient({
                 label="Initial Market Value"
                 value={formatCurrency(initialMarketValue)}
               />
+              <MetaPill
+                label="Creator"
+                value={agent.creator_display_name || "Unknown user"}
+              />
+              <MetaPill
+                label="Followers"
+                value={String(followerCount)}
+              />
             </div>
           </div>
 
           <div className="flex gap-3">
             <FollowAgentButton
+              key={`${agent.id}-${isFollowing ? "following" : "not-following"}`}
               agentId={agent.id}
               visible={permissions.canFollow}
+              initialFollowing={displayFollowing}
+              onFollowChange={handleFollowChange}
             />
             {permissions.canRun && <RunAgentButton agentId={agent.id} />}
 
             {permissions.canEdit && (
               <Link
                 href={`/agents/${agent.id}/settings`}
-                className="bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-lg"
+                className="rounded-lg bg-blue-100 px-4 py-2 text-slate-700 hover:bg-blue-200"
               >
                 Settings
               </Link>
@@ -159,8 +194,9 @@ export default function AgentDashboardClient({
             detailTone={valueChange >= 0 ? "positive" : "negative"}
           />
           <SummaryCard
-            label="Initial Market Value"
-            value={formatCurrency(initialMarketValue)}
+            label="Agent ETF Capital"
+            value={formatCurrency(followerPositionValue)}
+            detail="Simulated capital allocated by followers"
           />
           <SummaryCard
             label="Cash Balance"
@@ -178,17 +214,17 @@ export default function AgentDashboardClient({
           visible={permissions.canFollow}
         />
 
-        <section className="mb-8 rounded-xl border border-slate-800 p-4">
+        <section className="mb-8 rounded-xl border border-blue-200 bg-white/55 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-medium text-slate-300">
+              <h2 className="text-sm font-medium text-slate-700">
                 Agent Configuration
               </h2>
               <p className="mt-1 text-xs text-slate-500">
                 Read-only profile and workflow details are hidden by default.
               </p>
             </div>
-            <div className="inline-flex overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+            <div className="inline-flex overflow-hidden rounded-lg border border-blue-200 bg-white">
               <ConfigTabButton
                 active={configTab === "profile"}
                 onClick={() =>
@@ -209,7 +245,7 @@ export default function AgentDashboardClient({
           </div>
 
           {configTab && (
-            <div className="mt-4 border-t border-slate-800 pt-4">
+            <div className="mt-4 border-t border-blue-100 pt-4">
               {configTab === "profile" ? (
                 <ConfigCard title="Investment Profile">
                   <ConfigRow
@@ -300,7 +336,7 @@ export default function AgentDashboardClient({
         />
         </div>
 
-        <section className="border border-slate-800 rounded-xl p-6 mt-8">
+        <section className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Trade Proposals</h2>
@@ -326,7 +362,7 @@ export default function AgentDashboardClient({
           )}
         </section>
 
-        <section className="border border-slate-800 rounded-xl p-6 mt-8">
+        <section className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6">
           <div className="mb-4">
             <h2 className="text-xl font-semibold">Recent Agent Research</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -357,10 +393,10 @@ function ConfigCard({
   children: React.ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-slate-800 p-6">
+    <div className="rounded-xl border border-blue-100 bg-white/70 p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">{title}</h2>
-        <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-400">
+        <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-slate-600">
           Read only
         </span>
       </div>
@@ -385,7 +421,7 @@ function ConfigTabButton({
       className={
         active
           ? "bg-blue-600 px-3 py-1.5 text-xs font-medium text-white"
-          : "px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-900 hover:text-white"
+          : "px-3 py-1.5 text-xs text-slate-500 hover:bg-blue-50 hover:text-blue-700"
       }
     >
       {children}
@@ -421,7 +457,7 @@ function RunResearchCard({ run }: { run: AgentRun }) {
               {formatRunType(runType)}
             </span>
             {confidence && (
-              <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs capitalize text-slate-300">
+              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs capitalize text-slate-600">
                 {confidence}
               </span>
             )}
@@ -501,7 +537,7 @@ function RunResearchCard({ run }: { run: AgentRun }) {
             {risks.map((risk) => (
               <span
                 key={risk}
-                className="rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-100"
+                className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800"
               >
                 {risk}
               </span>
@@ -544,11 +580,11 @@ function ResearchListBlock({
 
 function ResearchMiniBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+    <div className="rounded-lg border border-blue-100 bg-white/70 p-3">
       <p className="mb-1 text-xs uppercase tracking-wide text-slate-500">
         {label}
       </p>
-      <p className="text-sm leading-relaxed text-slate-300">{value}</p>
+      <p className="text-sm leading-relaxed text-slate-600">{value}</p>
     </div>
   )
 }
@@ -584,7 +620,7 @@ function TradeProposalCard({
     : formatSlug(validatorStatus)
 
   return (
-    <article className="rounded-xl border border-slate-800 bg-slate-950/50 p-5">
+    <article className="rounded-xl border border-blue-200 bg-white/80 p-5 shadow-sm shadow-blue-100/60">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm text-slate-500">
@@ -597,8 +633,8 @@ function TradeProposalCard({
         <span
           className={
             approved
-              ? "rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300"
-              : "rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-200"
+              ? "rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs text-emerald-700"
+              : "rounded-md border border-amber-200 bg-amber-50 px-3 py-1 text-xs text-amber-700"
           }
         >
           {statusLabel}
@@ -607,7 +643,7 @@ function TradeProposalCard({
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
-          <p className="mb-2 text-sm font-medium text-slate-300">Suggested Actions</p>
+          <p className="mb-2 text-sm font-medium text-slate-700">Suggested Actions</p>
           {actions.length === 0 ? (
             <p className="text-sm text-slate-500">No structured actions returned.</p>
           ) : (
@@ -615,10 +651,10 @@ function TradeProposalCard({
               {actions.map((action, index) => (
                 <div
                   key={`${action.symbol}-${index}`}
-                  className="rounded-lg border border-slate-800 p-3"
+                  className="rounded-lg border border-blue-100 bg-blue-50/35 p-3"
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-md bg-slate-800 px-2 py-1 text-xs uppercase text-slate-200">
+                    <span className="rounded-md bg-blue-100 px-2 py-1 text-xs uppercase text-blue-700">
                       {action.action}
                     </span>
                     <span className="font-mono text-sm">{action.symbol}</span>
@@ -629,7 +665,7 @@ function TradeProposalCard({
                     )}
                   </div>
                   {action.reason && (
-                    <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                    <p className="mt-2 text-sm leading-relaxed text-slate-600">
                       {action.reason}
                     </p>
                   )}
@@ -647,7 +683,7 @@ function TradeProposalCard({
                             action.estimated_portfolio_pct_change,
                         })
                       }
-                      className="mt-3 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-200 hover:bg-blue-500/20"
+                      className="mt-3 rounded-md border border-blue-200 bg-white px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50"
                     >
                       Use in trade form
                     </button>
@@ -659,7 +695,7 @@ function TradeProposalCard({
         </div>
 
         <div>
-          <p className="mb-2 text-sm font-medium text-slate-300">Target Allocation</p>
+          <p className="mb-2 text-sm font-medium text-slate-700">Target Allocation</p>
           {allocations.length === 0 ? (
             <p className="text-sm text-slate-500">No target allocation returned.</p>
           ) : (
@@ -670,7 +706,7 @@ function TradeProposalCard({
                     <span className="font-mono">{allocation.symbol}</span>
                     <span>{allocation.target_weight}%</span>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                  <div className="h-2 overflow-hidden rounded-full bg-blue-100">
                     <div
                       className="h-full rounded-full bg-blue-500"
                       style={{
@@ -686,11 +722,11 @@ function TradeProposalCard({
       </div>
 
       {violations.length > 0 && (
-        <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-          <p className="mb-2 text-sm font-medium text-amber-200">
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="mb-2 text-sm font-medium text-amber-800">
             Risk Review Required
           </p>
-          <ul className="space-y-1 text-sm text-amber-100">
+          <ul className="space-y-1 text-sm text-amber-700">
             {violations.map((violation) => (
               <li key={violation}>- {violation}</li>
             ))}
@@ -699,11 +735,11 @@ function TradeProposalCard({
       )}
 
       {residualPolicyGaps.length > 0 && (
-        <div className="mt-4 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
-          <p className="mb-2 text-sm font-medium text-blue-200">
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <p className="mb-2 text-sm font-medium text-blue-800">
             Remaining Policy Gap
           </p>
-          <ul className="space-y-1 text-sm text-blue-100">
+          <ul className="space-y-1 text-sm text-blue-700">
             {residualPolicyGaps.map((gap) => (
               <li key={gap}>- {gap}</li>
             ))}
@@ -712,11 +748,11 @@ function TradeProposalCard({
       )}
 
       {manualActions.length > 0 && (
-        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-          <p className="mb-2 text-sm font-medium text-red-200">
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="mb-2 text-sm font-medium text-red-800">
             Manual Prerequisite
           </p>
-          <ul className="space-y-1 text-sm text-red-100">
+          <ul className="space-y-1 text-sm text-red-700">
             {manualActions.map((action) => (
               <li key={action}>- {action}</li>
             ))}
@@ -725,14 +761,14 @@ function TradeProposalCard({
       )}
 
       {stagedPlan.length > 0 && (
-        <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-          <p className="mb-2 text-sm font-medium text-slate-300">
+        <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/35 p-3">
+          <p className="mb-2 text-sm font-medium text-slate-700">
             Staged Remediation Plan
           </p>
           <div className="space-y-2">
             {stagedPlan.map((step) => (
-              <div key={step.step} className="text-sm leading-relaxed text-slate-400">
-                <span className="font-medium text-slate-200">
+              <div key={step.step} className="text-sm leading-relaxed text-slate-600">
+                <span className="font-medium text-slate-800">
                   Step {step.step}:
                 </span>{" "}
                 {step.goal}
@@ -748,7 +784,7 @@ function TradeProposalCard({
       )}
 
       {readString(proposalBody.allocation_comment, "") && (
-        <p className="mt-4 text-sm leading-relaxed text-slate-400">
+        <p className="mt-4 text-sm leading-relaxed text-slate-600">
           {readString(proposalBody.allocation_comment, "")}
         </p>
       )}
@@ -760,7 +796,7 @@ function ConfigRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-1 sm:grid-cols-[150px_1fr]">
       <p className="text-sm text-slate-500">{label}</p>
-      <p className="text-sm leading-relaxed text-slate-200">{value}</p>
+      <p className="text-sm leading-relaxed text-slate-700">{value}</p>
     </div>
   )
 }
@@ -815,7 +851,7 @@ function SummaryCard({
   }[detailTone]
 
   return (
-    <div className="border border-slate-800 rounded-xl p-5">
+    <div className="rounded-xl border border-blue-200 bg-white/65 p-5">
       <p className="text-slate-500 text-sm">{label}</p>
       <p className={`text-2xl font-bold mt-2 ${capitalize ? "capitalize" : ""}`}>
         {value}
@@ -831,12 +867,28 @@ function SummaryCard({
 
 function MetaPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+    <div className="rounded-lg border border-blue-100 bg-white/70 px-3 py-2">
       <p className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
         {label}
       </p>
-      <p className="mt-0.5 text-sm text-slate-200">{value}</p>
+      <p className="mt-0.5 text-sm text-slate-700">{value}</p>
     </div>
+  )
+}
+
+function StatusPill({ value }: { value: string }) {
+  const normalized = formatSlug(value)
+  const className =
+    value === "active" || value === "public"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+      : value === "system"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+        : "border-blue-200 bg-white/70 text-slate-700"
+
+  return (
+    <span className={`rounded-lg border px-3 py-2 text-sm capitalize ${className}`}>
+      {normalized}
+    </span>
   )
 }
 
@@ -954,8 +1006,8 @@ function getRunTone(runType: string) {
   }
 
   return {
-    card: "border-slate-800 bg-slate-950/50",
-    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    card: "border-blue-200 bg-white/80",
+    badge: "border-emerald-200 bg-emerald-50 text-emerald-700",
   }
 }
 

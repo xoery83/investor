@@ -5,6 +5,7 @@ import {
   canFollowAgent,
   canFollowMoreAgents,
 } from "../../../../../src/lib/auth/permissions"
+import { validateAgentPublicationReadiness } from "../../../../../src/lib/agents/publication-readiness"
 import { getRequestUser } from "../../../../../src/lib/auth/server"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -75,6 +76,22 @@ export async function POST(
   if (!followPermission.allowed) {
     return NextResponse.json(
       { success: false, error: followPermission.reason },
+      { status: 403 }
+    )
+  }
+
+  const readiness = await validateAgentPublicationReadiness({
+    supabase,
+    agent,
+  })
+
+  if (!readiness.ready) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `This agent is not ready to accept followers. ${readiness.blockers[0]}`,
+        publication_readiness: readiness,
+      },
       { status: 403 }
     )
   }

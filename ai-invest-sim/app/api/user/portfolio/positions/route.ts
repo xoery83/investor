@@ -4,6 +4,7 @@ import {
   canFollowAgent,
   canHoldMoreAgentPositions,
 } from "../../../../../src/lib/auth/permissions"
+import { validateAgentPublicationReadiness } from "../../../../../src/lib/agents/publication-readiness"
 import { getRequestUser } from "../../../../../src/lib/auth/server"
 import {
   calculateAgentNav,
@@ -60,6 +61,22 @@ export async function POST(request: Request) {
     if (!followPermission.allowed) {
       return NextResponse.json(
         { success: false, error: followPermission.reason },
+        { status: 403 }
+      )
+    }
+
+    const readiness = await validateAgentPublicationReadiness({
+      supabase,
+      agent,
+    })
+
+    if (!readiness.ready) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `This agent is not ready for new Agent ETF positions. ${readiness.blockers[0]}`,
+          publication_readiness: readiness,
+        },
         { status: 403 }
       )
     }

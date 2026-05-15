@@ -228,6 +228,7 @@ export default function AddHoldingForm({
     setQuoteMessage("")
 
     setLoading(false)
+    clearAgentDetailCache(agentId)
     if (Array.isArray(data.holdings)) {
       onTradeCompleted?.({
         holdings: data.holdings,
@@ -404,6 +405,18 @@ export default function AddHoldingForm({
       </button>
     </form>
   )
+}
+
+function clearAgentDetailCache(agentId: string) {
+  try {
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key.startsWith(`agents:detail:${agentId}:`)) {
+        window.sessionStorage.removeItem(key)
+      }
+    }
+  } catch {
+    // Cache invalidation is best effort only.
+  }
 }
 
 function formatShares(quantity: number) {

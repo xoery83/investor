@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppShell } from "../components/app-shell"
+import { I18nProvider } from "../components/i18n-provider"
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,10 +16,12 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className="dark h-full antialiased"
+      className="h-full antialiased"
     >
       <body className="min-h-full flex flex-col">
-        <AppShell>{children}</AppShell>
+        <I18nProvider>
+          <AppShell>{children}</AppShell>
+        </I18nProvider>
       </body>
     </html>
   );

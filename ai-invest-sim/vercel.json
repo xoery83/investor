@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/refresh-valuations",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/run-daily-agents",
+      "schedule": "0 21 * * 1-5"
+    },
+    {
+      "path": "/api/cron/run-weekly-agents",
+      "schedule": "0 22 * * 5"
+    }
+  ]
+}

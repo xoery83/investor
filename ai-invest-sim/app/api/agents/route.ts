@@ -21,10 +21,18 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey)
 export async function GET(request: Request) {
   const requestUser = await getRequestUser(request)
   const authedSupabase = createAuthedClient(request)
-  const { data, error } = await supabase
+  let query = supabase
     .from("agents")
     .select("*")
     .order("created_at", { ascending: false })
+
+  if (!requestUser) {
+    query = query.eq("visibility", "public")
+  } else if (requestUser.profile.role !== "admin") {
+    query = query.or(`visibility.eq.public,owner_user_id.eq.${requestUser.id}`)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     return NextResponse.json(
@@ -33,13 +41,7 @@ export async function GET(request: Request) {
     )
   }
 
-  const visibleAgents = (data || []).filter((agent) => {
-    if (requestUser?.profile.role === "admin") return true
-    if (agent.visibility === "public" || agent.visibility === "system") {
-      return true
-    }
-    return Boolean(requestUser && agent.owner_user_id === requestUser.id)
-  })
+  const visibleAgents = data || []
 
   const ownerIds = Array.from(
     new Set(
@@ -48,14 +50,14 @@ export async function GET(request: Request) {
         .filter((id): id is string => Boolean(id))
     )
   )
-  const profileMap = await loadCreatorProfiles(ownerIds)
-  const followCounts = await loadFollowCounts(
-    authedSupabase,
-    visibleAgents.map((agent) => agent.id)
-  )
-  const followingSet = requestUser
-    ? await loadUserFollowingSet(authedSupabase, requestUser.id)
-    : new Set<string>()
+  const visibleAgentIds = visibleAgents.map((agent) => agent.id)
+  const [profileMap, publicStats, followingSet] = await Promise.all([
+    loadCreatorProfiles(ownerIds),
+    loadAgentPublicStats(visibleAgentIds, authedSupabase),
+    requestUser
+      ? loadUserFollowingSet(authedSupabase, requestUser.id)
+      : Promise.resolve(new Set<string>()),
+  ])
   const agents = visibleAgents.map((agent) => {
     const profile = agent.owner_user_id
       ? profileMap.get(agent.owner_user_id)
@@ -69,8 +71,10 @@ export async function GET(request: Request) {
         (agent.creator_type === "admin" || agent.visibility === "system"
           ? "admin"
           : "user"),
-      follower_count: followCounts.get(agent.id) || 0,
+      follower_count: publicStats.get(agent.id)?.follower_count || 0,
       is_following: followingSet.has(agent.id),
+      follower_position_value:
+        publicStats.get(agent.id)?.follower_position_value || 0,
     }
   })
 
@@ -271,6 +275,49 @@ async function loadFollowCounts(
   }, new Map<string, number>())
 }
 
+type AgentPublicStats = {
+  follower_count: number
+  follower_position_value: number
+}
+
+async function loadAgentPublicStats(
+  agentIds: string[],
+  fallbackClient: typeof supabase
+) {
+  if (agentIds.length === 0) return new Map<string, AgentPublicStats>()
+
+  const { data, error } = await supabase.rpc("get_agent_public_stats", {
+    agent_ids: agentIds,
+  })
+
+  if (!error && data) {
+    return (data as Array<{
+      agent_id: string
+      follower_count: number | string
+      follower_position_value: number | string
+    }>).reduce((stats, row) => {
+      stats.set(String(row.agent_id), {
+        follower_count: Number(row.follower_count || 0),
+        follower_position_value: Number(row.follower_position_value || 0),
+      })
+      return stats
+    }, new Map<string, AgentPublicStats>())
+  }
+
+  const [followCounts, followerPositionValues] = await Promise.all([
+    loadFollowCounts(fallbackClient, agentIds),
+    loadFollowerPositionValues(fallbackClient, agentIds),
+  ])
+
+  return agentIds.reduce((stats, agentId) => {
+    stats.set(agentId, {
+      follower_count: followCounts.get(agentId) || 0,
+      follower_position_value: followerPositionValues.get(agentId) || 0,
+    })
+    return stats
+  }, new Map<string, AgentPublicStats>())
+}
+
 async function loadUserFollowingSet(client: typeof supabase, userId: string) {
   const { data, error } = await client
     .from("agent_follows")
@@ -281,6 +328,27 @@ async function loadUserFollowingSet(client: typeof supabase, userId: string) {
   if (error) return new Set<string>()
 
   return new Set((data || []).map((follow) => String(follow.agent_id)))
+}
+
+async function loadFollowerPositionValues(
+  client: typeof supabase,
+  agentIds: string[]
+) {
+  if (agentIds.length === 0) return new Map<string, number>()
+
+  const { data, error } = await client
+    .from("user_agent_positions")
+    .select("agent_id,market_value")
+    .in("agent_id", agentIds)
+    .in("status", ["open", "sell_only", "frozen"])
+
+  if (error) return new Map<string, number>()
+
+  return (data || []).reduce((values, position) => {
+    const agentId = String(position.agent_id)
+    values.set(agentId, (values.get(agentId) || 0) + Number(position.market_value || 0))
+    return values
+  }, new Map<string, number>())
 }
 
 function createAuthedClient(request: Request) {

@@ -178,7 +178,7 @@ export default function PortfolioPage() {
             <CardHeader>
               <CardTitle>Agent ETF Positions</CardTitle>
               <CardDescription>
-                Simulated holdings in followed public/system agents.
+                Simulated holdings in followed public agents.
               </CardDescription>
             </CardHeader>
             <CardContent>

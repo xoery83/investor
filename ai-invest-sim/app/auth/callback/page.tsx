@@ -27,7 +27,10 @@ function AuthCallbackContent() {
   useEffect(() => {
     async function finishAuth() {
       const code = searchParams.get("code")
-      const nextPath = searchParams.get("next") || "/agents"
+      const nextPath =
+        searchParams.get("next") ||
+        window.localStorage.getItem("auth:next") ||
+        "/agents"
 
       if (code) {
         const { error: exchangeError } =
@@ -39,6 +42,7 @@ function AuthCallbackContent() {
         }
       }
 
+      window.localStorage.removeItem("auth:next")
       router.replace(nextPath)
       router.refresh()
     }

@@ -21,13 +21,28 @@ export type RequestUser = {
 
 export const serverSupabase = createClient(supabaseUrl, supabaseAnonKey)
 
+const requestUserCache = new Map<
+  string,
+  { savedAt: number; user: RequestUser | null }
+>()
+const REQUEST_USER_CACHE_TTL_MS = 30_000
+const REQUEST_USER_CACHE_MAX_ENTRIES = 200
+
 export async function getRequestUser(request: Request) {
   const token = getBearerToken(request)
   if (!token) return null
 
+  const cached = requestUserCache.get(token)
+  if (cached && Date.now() - cached.savedAt < REQUEST_USER_CACHE_TTL_MS) {
+    return cached.user
+  }
+
   const { data, error } = await serverSupabase.auth.getUser(token)
 
-  if (error || !data.user) return null
+  if (error || !data.user) {
+    writeRequestUserCache(token, null)
+    return null
+  }
 
   const user = data.user
   const email = user.email || null
@@ -43,11 +58,13 @@ export async function getRequestUser(request: Request) {
     .maybeSingle()
 
   if (profile) {
-    return {
+    const requestUser = {
       id: user.id,
       email,
       profile: profile as AppUserProfile,
     } satisfies RequestUser
+    writeRequestUserCache(token, requestUser)
+    return requestUser
   }
 
   const { data: createdProfile } = await serverSupabase
@@ -66,7 +83,7 @@ export async function getRequestUser(request: Request) {
     .select()
     .single()
 
-  return {
+  const requestUser = {
     id: user.id,
     email,
     profile: (createdProfile || {
@@ -77,10 +94,17 @@ export async function getRequestUser(request: Request) {
       plan_status: "active",
     }) as AppUserProfile,
   } satisfies RequestUser
+  writeRequestUserCache(token, requestUser)
+  return requestUser
 }
 
 export function requireRequestUser(request: Request) {
   return getRequestUser(request)
+}
+
+export function clearRequestUserCache(request: Request) {
+  const token = getBearerToken(request)
+  if (token) requestUserCache.delete(token)
 }
 
 function getBearerToken(request: Request) {
@@ -91,4 +115,16 @@ function getBearerToken(request: Request) {
 
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function writeRequestUserCache(token: string, user: RequestUser | null) {
+  if (requestUserCache.size >= REQUEST_USER_CACHE_MAX_ENTRIES) {
+    const oldestKey = requestUserCache.keys().next().value
+    if (oldestKey) requestUserCache.delete(oldestKey)
+  }
+
+  requestUserCache.set(token, {
+    savedAt: Date.now(),
+    user,
+  })
 }

@@ -74,7 +74,10 @@ export default function SettingsPage() {
   const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(null)
   const [provider, setProvider] = useState("Unknown")
   const [loading, setLoading] = useState(true)
+  const [savingName, setSavingName] = useState(false)
+  const [displayName, setDisplayName] = useState("")
   const [error, setError] = useState("")
+  const [notice, setNotice] = useState("")
 
   useEffect(() => {
     let cancelled = false
@@ -116,6 +119,7 @@ export default function SettingsPage() {
       if (cancelled) return
 
       setAuth(mePayload)
+      setDisplayName(mePayload.user?.profile.display_name || "")
       setAgents(agentsPayload.success ? agentsPayload.agents || [] : [])
       setPortfolio(portfolioPayload.success ? portfolioPayload : null)
       if (!mePayload.success) setError(mePayload.error || "Failed to load user.")
@@ -144,6 +148,40 @@ export default function SettingsPage() {
   )
   const followedAgents = agents.filter((agent) => agent.is_following)
   const agentPositions = portfolio?.positions?.length || 0
+
+  async function saveDisplayName() {
+    setSavingName(true)
+    setError("")
+    setNotice("")
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in before updating your display name.")
+      setSavingName(false)
+      return
+    }
+
+    const res = await fetch("/api/auth/me", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ display_name: displayName }),
+    })
+    const data = (await res.json()) as AuthMePayload
+
+    if (!data.success) {
+      setError(data.error || "Failed to update display name.")
+    } else {
+      setAuth(data)
+      setNotice("Display name updated.")
+    }
+
+    setSavingName(false)
+  }
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-8 sm:px-6 lg:px-10">
@@ -180,6 +218,11 @@ export default function SettingsPage() {
           {error}
         </div>
       )}
+      {notice && (
+        <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          {notice}
+        </div>
+      )}
 
       {!user && !loading ? (
         <Card className="border-border/60 bg-card/55 backdrop-blur-md">
@@ -198,6 +241,39 @@ export default function SettingsPage() {
         </Card>
       ) : (
         <>
+          <Card className="mb-6 border-border/60 bg-card/80 backdrop-blur-md">
+            <CardHeader>
+              <CardTitle>Public Profile</CardTitle>
+              <CardDescription>
+                This name is shown as the creator name on public agents and agent lists.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <label className="flex-1">
+                  <span className="mb-2 block text-sm text-muted-foreground">
+                    Display name
+                  </span>
+                  <input
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    placeholder="Your creator name"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-blue-400"
+                  />
+                </label>
+                <div className="flex items-end">
+                  <Button
+                    type="button"
+                    onClick={saveDisplayName}
+                    disabled={savingName || !displayName.trim()}
+                  >
+                    {savingName ? "Saving..." : "Save name"}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <section className="mb-6 grid gap-4 lg:grid-cols-3">
             <MetricCard
               icon={<UserRound className="h-5 w-5" />}
@@ -288,7 +364,7 @@ export default function SettingsPage() {
                   Scheduled Agent runs
                 </Capability>
                 <Capability enabled>
-                  Follow public and system Agents
+                  Follow public Agents
                 </Capability>
                 <div className="mt-5 rounded-lg border border-border/60 bg-muted/20 p-4 text-muted-foreground">
                   Billing, language preferences, notification controls, and connected

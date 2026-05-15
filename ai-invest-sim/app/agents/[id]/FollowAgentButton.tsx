@@ -8,17 +8,24 @@ import { supabase } from "../../../src/lib/supabase"
 export default function FollowAgentButton({
   agentId,
   visible,
+  initialFollowing,
+  onFollowChange,
 }: {
   agentId: string
   visible: boolean
+  initialFollowing?: boolean
+  onFollowChange?: (following: boolean) => void
 }) {
   const router = useRouter()
-  const [following, setFollowing] = useState(false)
+  const controlled = initialFollowing !== undefined
+  const [loadedFollowing, setLoadedFollowing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const following = controlled ? Boolean(initialFollowing) : loadedFollowing
 
   useEffect(() => {
     if (!visible) return
+    if (controlled) return
 
     let cancelled = false
 
@@ -33,7 +40,7 @@ export default function FollowAgentButton({
       const data = await res.json()
 
       if (!cancelled && data.success) {
-        setFollowing(Boolean(data.following))
+        setLoadedFollowing(Boolean(data.following))
       }
     }
 
@@ -42,7 +49,7 @@ export default function FollowAgentButton({
     return () => {
       cancelled = true
     }
-  }, [agentId, visible])
+  }, [agentId, controlled, visible])
 
   async function toggleFollow() {
     setLoading(true)
@@ -69,8 +76,13 @@ export default function FollowAgentButton({
       return
     }
 
-    setFollowing(Boolean(data.following))
+    const nextFollowing = Boolean(data.following)
+    if (!controlled) {
+      setLoadedFollowing(nextFollowing)
+    }
+    onFollowChange?.(nextFollowing)
     clearAgentsListCache()
+    clearAgentDetailCache(agentId)
     setLoading(false)
     router.refresh()
   }
@@ -96,10 +108,25 @@ export default function FollowAgentButton({
   )
 }
 
+function clearAgentDetailCache(agentId: string) {
+  try {
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key.startsWith(`agents:detail:${agentId}:`)) {
+        window.sessionStorage.removeItem(key)
+      }
+    }
+  } catch {
+    // Cache invalidation is best effort only.
+  }
+}
+
 function clearAgentsListCache() {
   try {
-    window.sessionStorage.removeItem("agents:list:auth")
-    window.sessionStorage.removeItem("agents:list:anon")
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key === "agents:list:anon" || key.startsWith("agents:list:auth:")) {
+        window.sessionStorage.removeItem(key)
+      }
+    }
   } catch {
     // Cache invalidation is best effort only.
   }

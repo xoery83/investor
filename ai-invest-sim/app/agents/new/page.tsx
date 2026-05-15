@@ -121,7 +121,7 @@ export default function NewAgentPage() {
 
   if (authLoading) {
     return (
-      <main className="min-h-screen bg-slate-950 p-8 text-white">
+      <main className="min-h-screen bg-background p-8 text-foreground">
         Loading...
       </main>
     )
@@ -129,7 +129,7 @@ export default function NewAgentPage() {
 
   if (!user) {
     return (
-      <main className="min-h-screen bg-slate-950 p-8 text-white">
+      <main className="min-h-screen bg-background p-8 text-foreground">
         <div className="mx-auto max-w-2xl rounded-xl border border-slate-800 p-8">
           <h1 className="text-3xl font-bold">Login required</h1>
           <p className="mt-3 text-slate-400">
@@ -137,7 +137,7 @@ export default function NewAgentPage() {
           </p>
           <Link
             href="/auth/login?next=/agents/new"
-            className="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-2 hover:bg-blue-700"
+            className="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-2 text-white hover:bg-blue-700"
           >
             Log in to create an agent
           </Link>
@@ -147,7 +147,7 @@ export default function NewAgentPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 p-8 text-white">
+    <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-5xl">
         <div className="mb-6">
           <Link href="/agents" className="text-sm text-blue-400">
@@ -216,7 +216,7 @@ export default function NewAgentPage() {
             <button
               type="submit"
               disabled={parsing || !naturalLanguage.trim()}
-              className="mt-5 w-full rounded-lg bg-blue-600 px-5 py-2 hover:bg-blue-700 disabled:bg-slate-700"
+              className="mt-5 w-full rounded-lg bg-blue-600 px-5 py-2 text-white hover:bg-blue-700 disabled:bg-slate-700"
             >
               {parsing ? "Generating draft..." : draft ? "Regenerate Draft" : "Preview Structured Draft"}
             </button>
@@ -338,7 +338,7 @@ export default function NewAgentPage() {
                   <button
                     type="submit"
                     disabled={creating}
-                    className="rounded-lg bg-blue-600 px-5 py-2 hover:bg-blue-700 disabled:bg-slate-700"
+                    className="rounded-lg bg-blue-600 px-5 py-2 text-white hover:bg-blue-700 disabled:bg-slate-700"
                   >
                     {creating ? "Creating..." : "Create Agent"}
                   </button>

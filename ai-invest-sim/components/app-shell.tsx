@@ -18,26 +18,27 @@ import {
 } from "lucide-react"
 
 import { cn } from "../lib/utils"
+import { useI18n, type I18nKey } from "./i18n-provider"
 import { supabase } from "../src/lib/supabase"
 
 type NavItem = {
-  label: string
+  labelKey: I18nKey
   href: string
   icon: React.ComponentType<{ className?: string }>
   aliases?: string[]
 }
 
 type NavSection = {
-  title: string
+  titleKey: I18nKey
   items: NavItem[]
 }
 
 const navSections: NavSection[] = [
   {
-    title: "Overview",
+    titleKey: "nav.overview",
     items: [
       {
-        label: "Dashboard",
+        labelKey: "nav.dashboard",
         href: "/dashboard",
         icon: LayoutDashboard,
         aliases: ["/"],
@@ -45,20 +46,20 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    title: "Invest",
+    titleKey: "nav.invest",
     items: [
-      { label: "Agents", href: "/agents", icon: Bot },
-      { label: "Strategies", href: "/strategies", icon: FlaskConical },
-      { label: "Portfolio", href: "/portfolio", icon: BriefcaseBusiness },
+      { labelKey: "nav.agents", href: "/agents", icon: Bot },
+      { labelKey: "nav.strategies", href: "/strategies", icon: FlaskConical },
+      { labelKey: "nav.portfolio", href: "/portfolio", icon: BriefcaseBusiness },
     ],
   },
   {
-    title: "Intelligence",
-    items: [{ label: "Research", href: "/research", icon: Sparkles }],
+    titleKey: "nav.intelligence",
+    items: [{ labelKey: "nav.research", href: "/research", icon: Sparkles }],
   },
   {
-    title: "System",
-    items: [{ label: "Settings", href: "/settings", icon: Settings }],
+    titleKey: "nav.system",
+    items: [{ labelKey: "nav.settings", href: "/settings", icon: Settings }],
   },
 ]
 
@@ -70,6 +71,7 @@ function isActive(pathname: string, item: NavItem) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const { locale, setLocale, t } = useI18n()
   const [collapsed, setCollapsed] = useState(false)
   const [user, setUser] = useState<User | null>(null)
 
@@ -120,9 +122,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
               {!collapsed && (
                 <div>
-                  <p className="text-sm font-semibold tracking-tight">AI Invest OS</p>
+                  <p className="text-sm font-semibold tracking-tight">
+                    {t("app.name")}
+                  </p>
                   <p className="font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
-                    Simulated Environment
+                    {t("app.subtitle")}
                   </p>
                 </div>
               )}
@@ -132,7 +136,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 type="button"
                 onClick={() => setCollapsed(true)}
                 className="rounded-lg border border-border/70 p-2 text-muted-foreground hover:bg-card hover:text-foreground"
-                title="Collapse sidebar"
+                title={t("layout.collapse")}
               >
                 <PanelLeftClose className="size-4" />
               </button>
@@ -144,7 +148,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 type="button"
                 onClick={() => setCollapsed(false)}
                 className="rounded-lg border border-border/70 p-2 text-muted-foreground hover:bg-card hover:text-foreground"
-                title="Expand sidebar"
+                title={t("layout.expand")}
               >
                 <PanelLeftOpen className="size-4" />
               </button>
@@ -152,10 +156,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
           <nav className="space-y-5">
             {navSections.map((section) => (
-              <div key={section.title}>
+              <div key={section.titleKey}>
                 {!collapsed && (
                   <p className="px-2 pb-1 font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
-                    {section.title}
+                    {t(section.titleKey)}
                   </p>
                 )}
                 <div className="space-y-1.5">
@@ -167,7 +171,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <Link
                         key={item.href}
                         href={item.href}
-                        title={collapsed ? item.label : undefined}
+                        title={collapsed ? t(item.labelKey) : undefined}
                         className={cn(
                           "group flex items-center rounded-xl border text-sm transition-all",
                           collapsed
@@ -186,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                               : "text-muted-foreground group-hover:text-foreground"
                           )}
                         />
-                        {!collapsed && <span>{item.label}</span>}
+                        {!collapsed && <span>{t(item.labelKey)}</span>}
                       </Link>
                     )
                   })}
@@ -194,6 +198,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             ))}
           </nav>
+          <div
+            className={cn(
+              "absolute inset-x-3 bottom-20",
+              collapsed && "flex justify-center"
+            )}
+          >
+            <div
+              className={cn(
+                "flex rounded-xl border border-border/70 bg-card/50 p-1",
+                collapsed ? "flex-col" : "items-center gap-1"
+              )}
+              aria-label={t("language.label")}
+            >
+              {(["en", "zh"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setLocale(option)}
+                  className={cn(
+                    "rounded-lg px-2.5 py-1.5 text-xs font-medium transition",
+                    locale === option
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  {t(option === "en" ? "language.en" : "language.zh")}
+                </button>
+              ))}
+            </div>
+          </div>
           <div
             className={cn(
               "absolute inset-x-3 bottom-4",
@@ -204,7 +238,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <button
                 type="button"
                 onClick={signOut}
-                title={collapsed ? "Sign out" : undefined}
+                title={collapsed ? t("auth.signOut") : undefined}
                 className={cn(
                   "flex w-full items-center rounded-xl border border-border/70 bg-card/40 text-sm text-muted-foreground hover:bg-card hover:text-foreground",
                   collapsed ? "justify-center px-0 py-3" : "gap-2.5 px-3 py-2.5"
@@ -213,21 +247,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <UserCircle className="size-4" />
                 {!collapsed && (
                   <span className="truncate">
-                    {user.email || "Signed in"} · Sign out
+                    {user.email || t("auth.signedIn")} · {t("auth.signOut")}
                   </span>
                 )}
               </button>
             ) : (
               <Link
                 href={loginHref(pathname)}
-                title={collapsed ? "Log in" : undefined}
+                title={collapsed ? t("auth.logIn") : undefined}
                 className={cn(
                   "flex w-full items-center rounded-xl border border-primary/30 bg-primary/10 text-sm text-primary hover:bg-primary/15",
                   collapsed ? "justify-center px-0 py-3" : "gap-2.5 px-3 py-2.5"
                 )}
               >
                 <UserCircle className="size-4" />
-                {!collapsed && <span>Log in</span>}
+                {!collapsed && <span>{t("auth.logIn")}</span>}
               </Link>
             )}
           </div>
@@ -248,7 +282,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         : "border-border/70 bg-muted/20 text-muted-foreground"
                     )}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                   </Link>
                 )
               })}

@@ -7,6 +7,7 @@ import {
   defaultWorkflowConfig,
 } from "../../../../src/lib/agents/default-config"
 import { generateInvestmentUniverse } from "../../../../src/lib/agents/investment-universe"
+import { validateAgentPublicationReadiness } from "../../../../src/lib/agents/publication-readiness"
 import {
   canActivateMoreAgents,
   canEditAgent,
@@ -24,6 +25,13 @@ import type {
   WorkflowConfig,
 } from "../../../../src/lib/types/agent"
 
+type CreatorProfile = {
+  id: string
+  email: string | null
+  display_name: string | null
+  role: string | null
+}
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
@@ -35,6 +43,7 @@ export async function GET(
 ) {
   const { id } = await context.params
   const requestUser = await getRequestUser(request)
+  const authedSupabase = createAuthedClient(request)
 
   const { data: agent, error: agentError } = await supabase
     .from("agents")
@@ -57,66 +66,105 @@ export async function GET(
     )
   }
 
-  const { data: holdings, error: holdingsError } = await supabase
-    .from("agent_holdings")
-    .select("*")
-    .eq("agent_id", id)
-    .order("weight", { ascending: false })
+  const followingPromise = requestUser
+    ? authedSupabase
+        .from("agent_follows")
+        .select("id")
+        .eq("agent_id", id)
+        .eq("user_id", requestUser.id)
+        .eq("status", "active")
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null })
+  const creatorProfilePromise = agent.owner_user_id
+    ? supabase
+        .from("user_profiles")
+        .select("id,email,display_name,role")
+        .eq("id", agent.owner_user_id)
+        .maybeSingle()
+    : Promise.resolve({ data: null, error: null })
+  const publicStatsPromise = loadAgentPublicStats(id, authedSupabase)
 
-  if (holdingsError) {
-    return NextResponse.json(
-      { success: false, error: holdingsError.message },
-      { status: 500 }
-    )
-  }
+  const valuationCutoff = new Date()
+  valuationCutoff.setFullYear(valuationCutoff.getFullYear() - 1)
 
-  const { data: runs, error: runsError } = await supabase
-    .from("agent_runs")
-    .select("*")
-    .eq("agent_id", id)
-    .order("created_at", { ascending: false })
-    .limit(10)
-
-  if (runsError) {
-    return NextResponse.json(
-      { success: false, error: runsError.message },
-      { status: 500 }
-    )
-  }
-
-  const { data: valuations, error: valuationsError } = await supabase
-    .from("agent_valuations")
-    .select("*")
-    .eq("agent_id", id)
-    .order("recorded_at", { ascending: true })
-
-  if (valuationsError) {
-    return NextResponse.json(
-      { success: false, error: valuationsError.message },
-      { status: 500 }
-    )
-  }
-
-  const { data: tradeProposals, error: tradeProposalsError } = await supabase
-    .from("trade_proposals")
-    .select("*, validator_results(*)")
-    .eq("agent_id", id)
-    .order("created_at", { ascending: false })
-    .limit(5)
-
-  if (tradeProposalsError) {
-    return NextResponse.json(
-      { success: false, error: tradeProposalsError.message },
-      { status: 500 }
-    )
-  }
-
-  const [profile, riskPolicy, workflowConfig, investmentUniverse] = await Promise.all([
+  const [
+    followingResult,
+    creatorProfileResult,
+    publicStats,
+    holdingsResult,
+    runsResult,
+    valuationsResult,
+    tradeProposalsResult,
+    profile,
+    riskPolicy,
+    workflowConfig,
+    investmentUniverse,
+  ] = await Promise.all([
+    followingPromise,
+    creatorProfilePromise,
+    publicStatsPromise,
+    supabase
+      .from("agent_holdings")
+      .select("*")
+      .eq("agent_id", id)
+      .order("weight", { ascending: false }),
+    supabase
+      .from("agent_runs")
+      .select("*")
+      .eq("agent_id", id)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("agent_valuations")
+      .select("*")
+      .eq("agent_id", id)
+      .gte("recorded_at", valuationCutoff.toISOString())
+      .order("recorded_at", { ascending: true })
+      .limit(2000),
+    supabase
+      .from("trade_proposals")
+      .select("*, validator_results(*)")
+      .eq("agent_id", id)
+      .order("created_at", { ascending: false })
+      .limit(5),
     getAgentProfile(id),
     getRiskPolicy(id),
     getWorkflowConfig(id),
     getInvestmentUniverse(id),
   ])
+
+  if (holdingsResult.error) {
+    return NextResponse.json(
+      { success: false, error: holdingsResult.error.message },
+      { status: 500 }
+    )
+  }
+
+  if (runsResult.error) {
+    return NextResponse.json(
+      { success: false, error: runsResult.error.message },
+      { status: 500 }
+    )
+  }
+
+  if (valuationsResult.error) {
+    return NextResponse.json(
+      { success: false, error: valuationsResult.error.message },
+      { status: 500 }
+    )
+  }
+
+  if (tradeProposalsResult.error) {
+    return NextResponse.json(
+      { success: false, error: tradeProposalsResult.error.message },
+      { status: 500 }
+    )
+  }
+
+  const holdings = holdingsResult.data || []
+  const runs = runsResult.data || []
+  const valuations = valuationsResult.data || []
+  const tradeProposals = tradeProposalsResult.data || []
 
   const holdingsValue = (holdings || []).reduce((sum, holding) => {
     return sum + Number(holding.market_value || 0)
@@ -132,11 +180,22 @@ export async function GET(
       cash_balance: cashBalance,
       holdings_value: holdingsValue,
       current_value: totalValue,
+      creator_display_name: resolveCreatorDisplayName(
+        agent,
+        creatorProfileResult.data
+      ),
+      creator_role:
+        creatorProfileResult.data?.role ||
+        (agent.creator_type === "admin" || agent.visibility === "system"
+          ? "admin"
+          : "user"),
+      follower_count: publicStats.follower_count,
+      follower_position_value: publicStats.follower_position_value,
     },
-    holdings: holdings || [],
-    runs: runs || [],
-    valuations: valuations || [],
-    trade_proposals: tradeProposals || [],
+    holdings,
+    runs,
+    valuations,
+    trade_proposals: tradeProposals,
     profile,
     risk_policy: riskPolicy,
     workflow_config: workflowConfig,
@@ -147,12 +206,64 @@ export async function GET(
       canTrade: canTradeAgentPortfolio(requestUser, agent).allowed,
       canFollow: canFollowAgent(requestUser, agent).allowed,
     },
+    is_following: Boolean(followingResult.data),
+    publication_readiness: await validateAgentPublicationReadiness({
+      supabase,
+      agent,
+    }),
     portfolio_summary: {
       cash_balance: cashBalance,
       holdings_value: holdingsValue,
       total_value: totalValue,
     },
   })
+}
+
+function createAuthedClient(request: Request) {
+  const authorization = request.headers.get("authorization") || ""
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: authorization ? { Authorization: authorization } : {},
+    },
+  })
+}
+
+async function loadAgentPublicStats(
+  agentId: string,
+  fallbackClient: ReturnType<typeof createAuthedClient>
+) {
+  const { data, error } = await supabase.rpc("get_agent_public_stats", {
+    agent_ids: [agentId],
+  })
+
+  if (!error && Array.isArray(data) && data[0]) {
+    return {
+      follower_count: Number(data[0].follower_count || 0),
+      follower_position_value: Number(data[0].follower_position_value || 0),
+    }
+  }
+
+  const [followerCountResult, followerPositionValueResult] = await Promise.all([
+    fallbackClient
+      .from("agent_follows")
+      .select("id", { count: "exact", head: true })
+      .eq("agent_id", agentId)
+      .eq("status", "active"),
+    fallbackClient
+      .from("user_agent_positions")
+      .select("market_value")
+      .eq("agent_id", agentId)
+      .in("status", ["open", "sell_only", "frozen"]),
+  ])
+
+  return {
+    follower_count: followerCountResult.count || 0,
+    follower_position_value: (followerPositionValueResult.data || []).reduce(
+      (sum, position) => sum + Number(position.market_value || 0),
+      0
+    ),
+  }
 }
 
 async function getAgentProfile(agentId: string): Promise<AgentProfile> {
@@ -289,10 +400,10 @@ export async function PATCH(
     )
   }
 
-  if (
-    resolvedVisibility === "public" &&
-    existingAgent.visibility !== "public"
-  ) {
+  const publishingToPublic =
+    resolvedVisibility === "public" && existingAgent.visibility !== "public"
+
+  if (publishingToPublic) {
     const publishPermission = canPublishAgent(requestUser)
     if (!publishPermission.allowed) {
       return NextResponse.json(
@@ -435,6 +546,32 @@ export async function PATCH(
       profile: (profilePayload || (await getAgentProfile(id))) as AgentProfile,
       riskPolicy: (riskPolicyPayload || (await getRiskPolicy(id))) as RiskPolicy,
     })
+  }
+
+  if (publishingToPublic) {
+    const readiness = await validateAgentPublicationReadiness({
+      supabase,
+      agent: data,
+    })
+
+    if (!readiness.ready) {
+      await supabase
+        .from("agents")
+        .update({
+          visibility: existingAgent.visibility,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Agent cannot be published yet. ${readiness.blockers[0]}`,
+          publication_readiness: readiness,
+        },
+        { status: 403 }
+      )
+    }
   }
 
   await syncFollowStatusForLifecycle(id, resolvedLifecycleStatus)
@@ -592,4 +729,19 @@ function resolveAgentVisibility(
   }
   if (value === "private") return "private"
   return fallback || "private"
+}
+
+function resolveCreatorDisplayName(
+  agent: { creator_type?: string | null; visibility?: string | null },
+  profile?: CreatorProfile | null
+) {
+  const displayName = profile?.display_name?.trim()
+  if (displayName) return displayName
+
+  const emailPrefix = profile?.email?.split("@")[0]?.trim()
+  if (emailPrefix) return emailPrefix
+
+  if (agent.visibility === "system") return "System"
+  if (agent.creator_type === "admin") return "Admin"
+  return "Unknown user"
 }

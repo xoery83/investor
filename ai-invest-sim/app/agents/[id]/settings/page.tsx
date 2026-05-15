@@ -64,6 +64,20 @@ type CurrentUser = {
   }
 }
 
+type PublicationReadiness = {
+  ready: boolean
+  status: "ready" | "blocked"
+  checks: {
+    key: string
+    label: string
+    passed: boolean
+    severity: "blocker" | "warning"
+    message: string
+  }[]
+  blockers: string[]
+  warnings: string[]
+}
+
 const defaultAgentForm: AgentForm = {
   name: "",
   description: "",
@@ -139,6 +153,8 @@ export default function AgentSettingsPage() {
   const [workflowConfig, setWorkflowConfig] = useState<Record<string, unknown>>(
     {}
   )
+  const [publicationReadiness, setPublicationReadiness] =
+    useState<PublicationReadiness | null>(null)
 
   useEffect(() => {
     async function loadAgent() {
@@ -164,6 +180,7 @@ export default function AgentSettingsPage() {
       const profile = data.profile || {}
       const riskPolicy = data.risk_policy || {}
       const workflow = data.workflow_config || {}
+      setPublicationReadiness(data.publication_readiness || null)
 
       if (meRes?.ok) {
         const meData = await meRes.json()
@@ -350,6 +367,9 @@ export default function AgentSettingsPage() {
 
     if (!data.success) {
       setError(data.error || "Failed to save agent")
+      if (data.publication_readiness) {
+        setPublicationReadiness(data.publication_readiness)
+      }
       setSaving(false)
       return
     }
@@ -393,7 +413,7 @@ export default function AgentSettingsPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-950 p-8 text-white">
+      <main className="min-h-screen bg-background p-8 text-foreground">
         Loading...
       </main>
     )
@@ -414,7 +434,7 @@ export default function AgentSettingsPage() {
 
   if (!canEditSettings) {
     return (
-      <main className="min-h-screen bg-slate-950 p-8 text-white">
+      <main className="min-h-screen bg-background p-8 text-foreground">
         <div className="mx-auto w-full max-w-5xl">
           <div className="mb-6">
             <Link href={`/agents/${id}`} className="text-sm text-blue-400">
@@ -438,6 +458,8 @@ export default function AgentSettingsPage() {
           </div>
 
           <div className="space-y-6">
+            <PublicationReadinessPanel readiness={publicationReadiness} />
+
             <SettingsSection
               title="Basic Agent"
               description="Read-only identity and publication details."
@@ -588,7 +610,7 @@ export default function AgentSettingsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 p-8 text-white">
+    <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto w-full max-w-5xl">
         <div className="mb-6">
           <Link href={`/agents/${id}`} className="text-sm text-blue-400">
@@ -612,6 +634,8 @@ export default function AgentSettingsPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          <PublicationReadinessPanel readiness={publicationReadiness} />
+
           <SettingsSection
             title="Natural Language Update"
             description="Describe what you want to change. The system will update the fields below, but nothing is saved until you click Save Changes."
@@ -940,7 +964,7 @@ export default function AgentSettingsPage() {
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-blue-600 px-5 py-2 hover:bg-blue-700 disabled:bg-slate-700"
+              className="rounded-lg bg-blue-600 px-5 py-2 text-white hover:bg-blue-700 disabled:bg-slate-700"
             >
               {saving ? "Saving..." : "Save Changes"}
             </button>
@@ -1161,6 +1185,89 @@ function SettingsSection({
         <p className="mt-1 text-sm text-slate-500">{description}</p>
       </div>
       <div className="space-y-4">{children}</div>
+    </section>
+  )
+}
+
+function PublicationReadinessPanel({
+  readiness,
+}: {
+  readiness: PublicationReadiness | null
+}) {
+  if (!readiness) {
+    return (
+      <section className="rounded-xl border border-slate-800 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">Publication Readiness</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Readiness is checked before an agent can become public or accept followers.
+            </p>
+          </div>
+          <span className="rounded-md border border-slate-700 px-3 py-1 text-sm text-slate-400">
+            Loading
+          </span>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section
+      className={
+        readiness.ready
+          ? "rounded-xl border border-emerald-900 bg-emerald-950/20 p-6"
+          : "rounded-xl border border-amber-900 bg-amber-950/20 p-6"
+      }
+    >
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold">Publication Readiness</h2>
+          <p className="mt-1 text-sm text-slate-400">
+            Public agents must pass these checks before users can follow or buy simulated Agent ETF positions.
+          </p>
+        </div>
+        <span
+          className={
+            readiness.ready
+              ? "rounded-md border border-emerald-700 bg-emerald-950 px-3 py-1 text-sm text-emerald-300"
+              : "rounded-md border border-amber-700 bg-amber-950 px-3 py-1 text-sm text-amber-300"
+          }
+        >
+          {readiness.ready ? "Ready to publish" : "Blocked"}
+        </span>
+      </div>
+
+      {!readiness.ready && (
+        <div className="mb-4 rounded-lg border border-amber-900 bg-slate-950/50 p-3 text-sm text-amber-100">
+          {readiness.blockers[0] || "Publication is blocked by risk policy."}
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {readiness.checks.map((check) => (
+          <div
+            key={check.key}
+            className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-medium text-slate-200">{check.label}</p>
+              <span
+                className={
+                  check.passed
+                    ? "text-sm text-emerald-300"
+                    : "text-sm text-amber-300"
+                }
+              >
+                {check.passed ? "Pass" : "Blocked"}
+              </span>
+            </div>
+            {!check.passed && (
+              <p className="mt-2 text-sm text-slate-400">{check.message}</p>
+            )}
+          </div>
+        ))}
+      </div>
     </section>
   )
 }

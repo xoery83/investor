@@ -44,7 +44,8 @@ function LoginContent() {
 
   async function signInWithOAuth(provider: Provider) {
     setError("")
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
+    window.localStorage.setItem("auth:next", nextPath)
+    const redirectTo = `${window.location.origin}/auth/callback`
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -69,7 +70,7 @@ function LoginContent() {
             email,
             password,
             options: {
-              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+              emailRedirectTo: `${window.location.origin}/auth/callback`,
             },
           })
 
