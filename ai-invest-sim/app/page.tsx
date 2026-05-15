@@ -7,6 +7,7 @@ import { ArrowRight, Bot, BriefcaseBusiness, ChartSpline, Sparkles } from "lucid
 
 import { Button } from "../components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card"
+import { formatCompactCurrencyAmount } from "../src/lib/format/currency"
 import { supabase } from "../src/lib/supabase"
 
 type AgentListItem = {
@@ -107,10 +108,12 @@ export default function Home() {
           />
           <MetricCard
             label="Portfolio NAV"
-            value={summary ? formatCurrency(summary.total_value) : "--"}
+            value={
+              summary ? formatCompactCurrencyAmount(summary.total_value, "USD") : "--"
+            }
             detail={
               summary
-                ? `${formatCurrency(summary.cash_balance)} cash`
+                ? `${formatCompactCurrencyAmount(summary.cash_balance, "USD")} cash`
                 : "Log in to initialize"
             }
           />
@@ -227,12 +230,4 @@ function ModuleCard({
       </CardContent>
     </Card>
   )
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0))
 }

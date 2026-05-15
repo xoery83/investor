@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getPrice, type MarketQuote } from "./get-price"
+import { normalizeMarketSymbol } from "./normalize-symbol"
 
 const ACTIVE_MARKET_QUOTE_TTL_MS = 60_000
 const AFTER_HOURS_QUOTE_TTL_MS = 5 * 60_000
@@ -21,7 +22,7 @@ export async function getCachedPrice(
   supabase: SupabaseClient,
   symbol: string
 ): Promise<MarketQuote> {
-  const normalizedSymbol = symbol.trim().toUpperCase()
+  const normalizedSymbol = normalizeMarketSymbol(symbol)
   const cached = await readCachedQuote(supabase, normalizedSymbol)
 
   if (cached) {

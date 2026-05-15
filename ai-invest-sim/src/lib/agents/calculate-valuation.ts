@@ -26,6 +26,7 @@ export type ValuationSnapshot = {
   cash_balance: number
   holdings_value: number
   total_value: number
+  base_currency: string
 }
 
 export async function calculateAndStoreValuation({
@@ -135,6 +136,7 @@ export async function calculateAndStoreValuation({
     cash_balance: cashBalance,
     holdings_value: holdingsValue,
     total_value: totalValue,
+    base_currency: normalizeCurrency(agent.base_currency),
   }
 }
 

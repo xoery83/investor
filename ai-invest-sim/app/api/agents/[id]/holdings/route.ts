@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 
-import { canTradeAgentPortfolio } from "../../../../../src/lib/auth/permissions"
+import {
+  canEditAgent,
+  canTradeAgentPortfolio,
+} from "../../../../../src/lib/auth/permissions"
 import { getRequestUser } from "../../../../../src/lib/auth/server"
 import {
   getCachedFxRate,
   normalizeCurrency,
 } from "../../../../../src/lib/market/get-cached-fx-rate"
+import { normalizeMarketSymbol } from "../../../../../src/lib/market/normalize-symbol"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -38,6 +42,7 @@ export async function POST(
     average_cost,
     current_price,
     currency,
+    proposal_id,
     target_market_value_base,
   } = body
 
@@ -45,7 +50,7 @@ export async function POST(
   const numericCurrentPrice = Number(current_price)
   const targetMarketValueBase = Number(target_market_value_base || 0)
   const tradeAction = action === "sell" ? "sell" : "buy"
-  const normalizedSymbol = String(symbol || "").toUpperCase()
+  const normalizedSymbol = normalizeMarketSymbol(String(symbol || ""))
 
   if (
     !symbol ||
@@ -77,10 +82,20 @@ export async function POST(
 
   const tradePermission = canTradeAgentPortfolio(requestUser, agent)
   if (!tradePermission.allowed) {
-    return NextResponse.json(
-      { success: false, error: tradePermission.reason },
-      { status: 403 }
-    )
+    const proposalPermission = await canExecuteApprovedProposalTrade({
+      agent,
+      proposalId: proposal_id,
+      requestUser,
+      action: tradeAction,
+      symbol: normalizedSymbol,
+    })
+
+    if (!proposalPermission.allowed) {
+      return NextResponse.json(
+        { success: false, error: proposalPermission.reason || tradePermission.reason },
+        { status: 403 }
+      )
+    }
   }
 
   const baseCurrency = normalizeCurrency(agent.base_currency)
@@ -392,4 +407,89 @@ export async function POST(
     holdings_value: holdingsValue,
     total_value: totalValue,
   })
+}
+
+async function canExecuteApprovedProposalTrade({
+  agent,
+  proposalId,
+  requestUser,
+  action,
+  symbol,
+}: {
+  agent: Record<string, unknown>
+  proposalId: unknown
+  requestUser: NonNullable<Awaited<ReturnType<typeof getRequestUser>>>
+  action: "buy" | "sell"
+  symbol: string
+}) {
+  const editPermission = canEditAgent(requestUser, agent as Parameters<typeof canEditAgent>[1])
+  if (!editPermission.allowed) return editPermission
+
+  if (!["draft", "active"].includes(String(agent.lifecycle_status))) {
+    return {
+      allowed: false,
+      reason: "Only draft or active agents can execute trade proposals.",
+    }
+  }
+
+  const normalizedProposalId = String(proposalId || "").trim()
+  if (!normalizedProposalId) {
+    return {
+      allowed: false,
+      reason:
+        "Public agents can only be traded through an approved rebalance proposal.",
+    }
+  }
+
+  const { data: proposal, error } = await supabase
+    .from("trade_proposals")
+    .select("*, validator_results(*)")
+    .eq("id", normalizedProposalId)
+    .eq("agent_id", String(agent.id))
+    .maybeSingle()
+
+  if (error || !proposal) {
+    return { allowed: false, reason: "Approved trade proposal not found." }
+  }
+
+  const validatorResults: Array<Record<string, unknown>> = Array.isArray(
+    proposal.validator_results
+  )
+    ? proposal.validator_results
+    : []
+  const hasApproval =
+    proposal.validator_status === "approved" ||
+    validatorResults.some((result) => result.final_action_allowed === true)
+
+  if (!hasApproval) {
+    return {
+      allowed: false,
+      reason: "This trade proposal has not passed risk validation.",
+    }
+  }
+
+  const proposalBody = isRecord(proposal.proposal) ? proposal.proposal : {}
+  const actions: unknown[] = Array.isArray(proposalBody.suggested_actions)
+    ? proposalBody.suggested_actions
+    : []
+  const actionAllowed = actions.some((item) => {
+    if (!isRecord(item)) return false
+    return (
+      normalizeMarketSymbol(String(item.symbol || "")) === symbol &&
+      String(item.action || "").toLowerCase() === action
+    )
+  })
+
+  if (!actionAllowed) {
+    return {
+      allowed: false,
+      reason: "This trade is not part of the approved proposal.",
+    }
+  }
+
+  return { allowed: true }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }

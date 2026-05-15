@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
+import { formatCurrencyAmount } from "../../../src/lib/format/currency"
 import type { AgentHolding } from "../../../src/lib/types/agent"
 import { supabase } from "../../../src/lib/supabase"
 import type { PortfolioSummary, TradeDraft } from "./AgentPortfolioPanel"
@@ -13,12 +14,14 @@ export default function AddHoldingForm({
   holdings,
   tradeDraft,
   totalValue,
+  baseCurrency,
   onTradeCompleted,
 }: {
   agentId: string
   holdings: AgentHolding[]
   tradeDraft?: TradeDraft | null
   totalValue: number
+  baseCurrency: string
   onTradeCompleted?: (
     payload: PortfolioSummary & { holdings: UpdatedHolding[] }
   ) => void
@@ -32,7 +35,8 @@ export default function AddHoldingForm({
   const [quantity, setQuantity] = useState(0)
   const [averageCost, setAverageCost] = useState(0)
   const [currentPrice, setCurrentPrice] = useState(0)
-  const [currency, setCurrency] = useState("USD")
+  const [currency, setCurrency] = useState(baseCurrency || "USD")
+  const [targetMarketValueBase, setTargetMarketValueBase] = useState(0)
 
   const [lookupLoading, setLookupLoading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -65,7 +69,7 @@ export default function AddHoldingForm({
       setAssetName(existingHolding?.asset_name || "")
       setAssetType(draft.assetType || existingHolding?.asset_type || "stock")
       setAverageCost(Number(existingHolding?.average_cost || 0))
-      setCurrency(existingHolding?.currency || "USD")
+      setCurrency(existingHolding?.currency || baseCurrency || "USD")
       setError("")
       setQuoteMessage("Loading current quote for proposal action...")
 
@@ -74,6 +78,14 @@ export default function AddHoldingForm({
 
       const quote = quoteData?.success ? quoteData.quote : null
       const price = Number(quote?.price || fallbackPrice || 0)
+      const quoteCurrency = String(
+        quote?.currency || existingHolding?.currency || baseCurrency || "USD"
+      )
+      const fxRate =
+        existingHolding?.currency === quoteCurrency &&
+        Number(existingHolding?.fx_rate_to_base || 0) > 0
+          ? Number(existingHolding.fx_rate_to_base)
+          : await lookupFxRate(quoteCurrency, baseCurrency).catch(() => 1)
       const assetType = inferAssetType(
         String(quote?.assetType || ""),
         draft.assetType || existingHolding?.asset_type || "stock"
@@ -88,12 +100,13 @@ export default function AddHoldingForm({
             )
       )
       const tradeAmount = totalValue > 0 ? (tradePct / 100) * totalValue : 0
+      const priceBase = price * fxRate
       const estimatedQuantity =
-        price > 0 ? roundQuantity(tradeAmount / price) : 0
+        priceBase > 0 ? roundQuantity(tradeAmount / priceBase) : 0
 
       setAssetName(quote?.name || existingHolding?.asset_name || "")
       setAssetType(assetType)
-      setCurrency(String(quote?.currency || existingHolding?.currency || "USD"))
+      setCurrency(quoteCurrency)
       setCurrentPrice(price)
       setAverageCost(
         nextAction === "sell"
@@ -101,11 +114,12 @@ export default function AddHoldingForm({
           : price
       )
       setQuantity(estimatedQuantity)
+      setTargetMarketValueBase(nextAction === "buy" ? tradeAmount : 0)
       setQuoteMessage(
         price > 0
           ? `Proposal loaded: ${normalizedSymbol} @ ${String(
-              quote?.currency || existingHolding?.currency || "USD"
-            )} ${price.toFixed(2)}, estimated ${estimatedQuantity} shares.`
+              quoteCurrency
+            )} ${price.toFixed(2)}, FX ${fxRate.toFixed(4)}, estimated ${estimatedQuantity} shares.`
           : "Proposal loaded. Please enter price and quantity."
       )
     }
@@ -115,12 +129,13 @@ export default function AddHoldingForm({
     return () => {
       cancelled = true
     }
-  }, [tradeDraft, holdings, totalValue])
+  }, [tradeDraft, holdings, totalValue, baseCurrency])
 
   function handleActionChange(nextAction: "buy" | "sell") {
     setAction(nextAction)
     setError("")
     setQuoteMessage("")
+    setTargetMarketValueBase(0)
 
     if (nextAction === "sell" && holdings.length > 0 && !selectedHolding) {
       const firstHolding = holdings[0]
@@ -129,7 +144,7 @@ export default function AddHoldingForm({
       setAssetType(firstHolding.asset_type || "stock")
       setAverageCost(Number(firstHolding.average_cost || 0))
       setCurrentPrice(Number(firstHolding.current_price || 0))
-      setCurrency(firstHolding.currency || "USD")
+      setCurrency(firstHolding.currency || baseCurrency || "USD")
     }
   }
 
@@ -147,7 +162,8 @@ export default function AddHoldingForm({
     setAssetType(holding.asset_type || "stock")
     setAverageCost(Number(holding.average_cost || 0))
     setCurrentPrice(Number(holding.current_price || 0))
-    setCurrency(holding.currency || "USD")
+    setCurrency(holding.currency || baseCurrency || "USD")
+    setTargetMarketValueBase(0)
   }
 
   async function handleLookup() {
@@ -173,7 +189,7 @@ export default function AddHoldingForm({
     setSymbol(quote.symbol || symbol.toUpperCase())
     setAssetName(quote.name || "")
     setCurrentPrice(Number(quote.price || 0))
-    setCurrency(String(quote.currency || "USD"))
+    setCurrency(String(quote.currency || baseCurrency || "USD"))
 
     setAssetType(inferAssetType(String(quote.assetType || ""), "stock"))
 
@@ -182,10 +198,13 @@ export default function AddHoldingForm({
     }
 
     setQuoteMessage(
-      `Quote loaded: ${quote.name} @ ${String(quote.currency || "USD")} ${Number(
+      `Quote loaded: ${quote.name} @ ${String(
+        quote.currency || baseCurrency || "USD"
+      )} ${Number(
         quote.price || 0
       ).toFixed(2)}`
     )
+    setTargetMarketValueBase(0)
 
     setLookupLoading(false)
   }
@@ -216,6 +235,10 @@ export default function AddHoldingForm({
         asset_name: assetName,
         asset_type: assetType,
         quantity,
+        target_market_value_base:
+          action === "buy" && targetMarketValueBase > 0
+            ? targetMarketValueBase
+            : undefined,
         average_cost: averageCost,
         current_price: currentPrice,
         currency,
@@ -236,7 +259,8 @@ export default function AddHoldingForm({
     setQuantity(0)
     setAverageCost(0)
     setCurrentPrice(0)
-    setCurrency("USD")
+    setCurrency(baseCurrency || "USD")
+    setTargetMarketValueBase(0)
     setQuoteMessage("")
 
     setLoading(false)
@@ -355,7 +379,10 @@ export default function AddHoldingForm({
           className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           placeholder="10"
           value={quantity}
-          onChange={(e) => setQuantity(Number(e.target.value))}
+          onChange={(e) => {
+            setQuantity(Number(e.target.value))
+            setTargetMarketValueBase(0)
+          }}
           required
         />
       </div>
@@ -371,7 +398,10 @@ export default function AddHoldingForm({
           className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           placeholder="Optional"
           value={averageCost}
-          onChange={(e) => setAverageCost(Number(e.target.value))}
+          onChange={(e) => {
+            setAverageCost(Number(e.target.value))
+            setTargetMarketValueBase(0)
+          }}
           disabled={action === "sell"}
         />
       </div>
@@ -386,7 +416,10 @@ export default function AddHoldingForm({
           min="0"
           className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           value={currentPrice}
-          onChange={(e) => setCurrentPrice(Number(e.target.value))}
+          onChange={(e) => {
+            setCurrentPrice(Number(e.target.value))
+            setTargetMarketValueBase(0)
+          }}
           required
         />
       </div>
@@ -397,21 +430,28 @@ export default function AddHoldingForm({
           className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 uppercase"
           value={currency}
           maxLength={3}
-          onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+          onChange={(e) => {
+            setCurrency(e.target.value.toUpperCase())
+            setTargetMarketValueBase(0)
+          }}
           required
         />
         <p className="mt-1 text-xs text-slate-500">
-          Local trading currency. Portfolio totals convert to the agent base currency.
+          Local trading currency. Portfolio totals convert to {baseCurrency}.
         </p>
       </div>
 
       {action === "sell" && selectedHolding && (
         <div className="rounded-lg border border-blue-200 bg-white/80 p-3 text-sm text-slate-700">
           Available: {formatShares(selectedHolding.quantity)} shares, local value{" "}
-          {selectedHolding.currency || "USD"}{" "}
-          {Number(
-            selectedHolding.market_value_local ?? selectedHolding.market_value ?? 0
-          ).toLocaleString()}
+          {formatCurrencyAmount(
+            Number(
+              selectedHolding.market_value_local ??
+                selectedHolding.market_value ??
+                0
+            ),
+            selectedHolding.currency || baseCurrency
+          )}
         </div>
       )}
 
@@ -460,6 +500,23 @@ async function lookupQuote(symbol: string) {
   )
 
   return res.json()
+}
+
+async function lookupFxRate(fromCurrency: string, toCurrency: string) {
+  if (fromCurrency.toUpperCase() === toCurrency.toUpperCase()) return 1
+
+  const res = await fetch(
+    `/api/market/fx?from=${encodeURIComponent(
+      fromCurrency.trim()
+    )}&to=${encodeURIComponent(toCurrency.trim())}`
+  )
+  const data = await res.json()
+
+  if (!data.success) {
+    throw new Error(data.error || "Failed to fetch FX rate")
+  }
+
+  return Number(data.rate || 1)
 }
 
 function inferAssetType(quoteAssetType: string, fallback: string) {

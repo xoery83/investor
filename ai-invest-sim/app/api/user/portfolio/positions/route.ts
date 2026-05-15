@@ -11,6 +11,12 @@ import {
   createAuthedClient,
   ensureUserPortfolio,
 } from "../route"
+import {
+  getCachedFxRate,
+  normalizeCurrency,
+} from "../../../../../src/lib/market/get-cached-fx-rate"
+
+const USER_PORTFOLIO_CURRENCY = "USD"
 
 export async function POST(request: Request) {
   const requestUser = await getRequestUser(request)
@@ -128,7 +134,14 @@ export async function POST(request: Request) {
     )
   }
 
-  const nav = calculateAgentNav(agent)
+  const agentBaseCurrency = normalizeCurrency(agent.base_currency)
+  const navInAgentBaseCurrency = calculateAgentNav(agent)
+  const fxRate = await getCachedFxRate(
+    supabase,
+    agentBaseCurrency,
+    USER_PORTFOLIO_CURRENCY
+  )
+  const nav = roundMoney(navInAgentBaseCurrency * fxRate.rate)
   const cashBalance = Number(portfolio.portfolio.cash_balance || 0)
   const shares =
     requestedShares > 0 ? requestedShares : roundShares(amount / nav)
@@ -274,6 +287,9 @@ export async function POST(request: Request) {
       shares,
       nav,
       amount: tradeAmount,
+      currency: USER_PORTFOLIO_CURRENCY,
+      agent_base_currency: agentBaseCurrency,
+      fx_rate_to_usd: fxRate.rate,
     },
     portfolio: {
       cash_balance: nextCash,

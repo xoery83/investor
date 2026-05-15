@@ -13,6 +13,7 @@ export default function NewAgentPage() {
 
   const [naturalLanguage, setNaturalLanguage] = useState("")
   const [initialCapital, setInitialCapital] = useState(100000)
+  const [baseCurrency, setBaseCurrency] = useState("USD")
   const [draft, setDraft] = useState<AgentConfigDraft | null>(null)
   const [draftSource, setDraftSource] = useState("")
   const [parsing, setParsing] = useState(false)
@@ -94,6 +95,7 @@ export default function NewAgentPage() {
         philosophy: draft.philosophy,
         risk_level: draft.risk_level,
         initial_capital: initialCapital,
+        base_currency: baseCurrency,
         rebalance_frequency: draft.rebalance_frequency,
         profile: draft.profile,
         risk_policy: draft.risk_policy,
@@ -190,7 +192,7 @@ export default function NewAgentPage() {
 
             <label className="mt-4 block">
               <span className="mb-2 block text-sm text-slate-400">
-                Initial Capital
+                Initial Capital ({baseCurrency})
               </span>
               <input
                 type="number"
@@ -200,6 +202,29 @@ export default function NewAgentPage() {
                 min={1000}
                 required
               />
+            </label>
+
+            <label className="mt-4 block">
+              <span className="mb-2 block text-sm text-slate-400">
+                Base Currency
+              </span>
+              <select
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2"
+                value={baseCurrency}
+                onChange={(e) => setBaseCurrency(e.target.value)}
+              >
+                <option value="USD">USD</option>
+                <option value="AUD">AUD</option>
+                <option value="HKD">HKD</option>
+                <option value="NZD">NZD</option>
+                <option value="CNY">CNY</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="JPY">JPY</option>
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Cash, portfolio totals, weights, and valuation history use this currency.
+              </p>
             </label>
 
             {error && (
@@ -247,6 +272,10 @@ export default function NewAgentPage() {
                   <DraftRow label="Name" value={draft.name} />
                   <DraftRow label="Description" value={draft.description} />
                   <DraftRow label="Risk" value={draft.risk_level} />
+                  <DraftRow
+                    label="Base Currency"
+                    value={baseCurrency}
+                  />
                   <DraftRow
                     label="Rebalance"
                     value={draft.rebalance_frequency}

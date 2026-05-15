@@ -1,4 +1,5 @@
 import YahooFinance from "yahoo-finance2"
+import { normalizeMarketSymbol } from "./normalize-symbol"
 
 const yahooFinance = new YahooFinance()
 
@@ -16,9 +17,14 @@ export type MarketQuote = {
 export async function getPrice(
   symbol: string
 ): Promise<MarketQuote> {
+  const normalizedSymbol = normalizeMarketSymbol(symbol)
+
   try {
-    const quote = (await yahooFinance.quote(symbol)) as Record<string, unknown>
-    const fallbackSymbol = symbol.toUpperCase()
+    const quote = (await yahooFinance.quote(normalizedSymbol)) as Record<
+      string,
+      unknown
+    >
+    const fallbackSymbol = normalizedSymbol
     const marketState = readString(quote.marketState, "UNKNOWN")
     const selectedPrice = selectDisplayPrice(quote, marketState)
 
@@ -45,7 +51,7 @@ export async function getPrice(
   } catch (error) {
     console.error("Failed to fetch market price:", error)
 
-    throw new Error(`Failed to fetch quote for ${symbol}`)
+    throw new Error(`Failed to fetch quote for ${normalizedSymbol}`)
   }
 }
 

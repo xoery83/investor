@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { getPrice } from "@/lib/market/get-price"
+import { normalizeMarketSymbol } from "@/lib/market/normalize-symbol"
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const quote = await getPrice(symbol)
+    const quote = await getPrice(normalizeMarketSymbol(symbol))
 
     return NextResponse.json({
       success: true,

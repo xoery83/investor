@@ -113,6 +113,7 @@ export async function POST(
         cash_balance: cashBalance,
         holdings_value: holdingsValue,
         total_value: totalValue,
+        base_currency: (agent as Agent).base_currency || "USD",
       },
       valuations: valuations || [],
     })

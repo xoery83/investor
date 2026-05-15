@@ -5,6 +5,10 @@ import Link from "next/link"
 import type { User } from "@supabase/supabase-js"
 
 import { supabase } from "../../src/lib/supabase"
+import {
+  formatCompactCurrencyAmount,
+  formatCurrencyAmount,
+} from "../../src/lib/format/currency"
 import type { Agent } from "../../src/lib/types/agent"
 
 type AgentListItem = Agent & {
@@ -489,7 +493,10 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
       <div className="space-y-2 text-sm">
         <AgentMetric
           label="Value"
-          value={`$${Number(agent.current_value).toLocaleString()}`}
+          value={formatCompactCurrencyAmount(
+            Number(agent.current_value),
+            agent.base_currency || "USD"
+          )}
         />
         <AgentMetric
           label="Followers"
@@ -497,7 +504,11 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
         />
         <AgentMetric
           label="Agent ETF Capital"
-          value={formatCurrency(Number(agent.follower_position_value || 0))}
+          value={formatCurrencyAmount(
+            Number(agent.follower_position_value || 0),
+            "USD",
+            { maximumFractionDigits: 0 }
+          )}
         />
         <AgentMetric label="Risk" value={agent.risk_level} />
         <AgentMetric label="Frequency" value={agent.rebalance_frequency} />
@@ -531,13 +542,6 @@ function formatToken(value: string) {
   return value.replaceAll("_", " ")
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0))
-}
 
 function agentMatchesQuery(agent: AgentListItem, query: string) {
   const haystack = [

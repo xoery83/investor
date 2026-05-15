@@ -14,6 +14,7 @@ import {
 } from "recharts"
 
 import { Button } from "../../../components/ui/button"
+import { formatCurrencyAmount } from "../../../src/lib/format/currency"
 import { supabase } from "../../../src/lib/supabase"
 import type { PortfolioSummary } from "./AgentPortfolioPanel"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
@@ -22,6 +23,7 @@ import type { AgentValuation } from "../../../src/lib/types/agent"
 type ValuationPanelProps = {
   agentId: string
   initialValuations: AgentValuation[]
+  baseCurrency: string
   embedded?: boolean
   canRefresh?: boolean
   onHoldingsUpdated?: (holdings: UpdatedHolding[]) => void
@@ -35,6 +37,7 @@ type ValuationResponse = {
     cash_balance: number
     holdings_value: number
     total_value: number
+    base_currency?: string
   }
   valuations?: AgentValuation[]
   error?: string
@@ -53,6 +56,7 @@ const RANGE_OPTIONS: Array<{ value: ValuationRange; label: string }> = [
 export default function ValuationPanel({
   agentId,
   initialValuations,
+  baseCurrency,
   embedded = false,
   canRefresh = false,
   onHoldingsUpdated,
@@ -200,7 +204,11 @@ export default function ValuationPanel({
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 12 }}
-                  tickFormatter={(value) => `$${Number(value).toLocaleString()}`}
+                  tickFormatter={(value) =>
+                    formatCurrencyAmount(Number(value), baseCurrency, {
+                      maximumFractionDigits: 0,
+                    })
+                  }
                   domain={chartDomain}
                   width={86}
                 />
@@ -229,8 +237,8 @@ export default function ValuationPanel({
                       : ""
                   }}
                   formatter={(value) => [
-                    `$${Number(value).toLocaleString()}`,
-                    "Total value",
+                    formatCurrencyAmount(Number(value), baseCurrency),
+                    `Total value (${baseCurrency})`,
                   ]}
                 />
                 <Line
@@ -249,16 +257,29 @@ export default function ValuationPanel({
         <div className="rounded-lg border border-blue-200 bg-white/80 p-4">
           <p className="text-sm text-slate-500">Latest Snapshot</p>
           <p className="mt-2 text-2xl font-bold">
-            ${Number(latest?.total_value || 0).toLocaleString()}
+            {formatCurrencyAmount(
+              Number(latest?.total_value || 0),
+              latest?.base_currency || baseCurrency
+            )}
           </p>
           <div className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Holdings</span>
-              <span>${Number(latest?.holdings_value || 0).toLocaleString()}</span>
+              <span>
+                {formatCurrencyAmount(
+                  Number(latest?.holdings_value || 0),
+                  latest?.base_currency || baseCurrency
+                )}
+              </span>
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Cash</span>
-              <span>${Number(latest?.cash_value || 0).toLocaleString()}</span>
+              <span>
+                {formatCurrencyAmount(
+                  Number(latest?.cash_value || 0),
+                  latest?.base_currency || baseCurrency
+                )}
+              </span>
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Cumulative</span>

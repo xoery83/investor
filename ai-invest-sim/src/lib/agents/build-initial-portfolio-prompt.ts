@@ -33,6 +33,15 @@ export function buildInitialPortfolioPrompt({
 }: BuildInitialPortfolioPromptInput) {
   const totalValue = Number(agent.current_value || agent.initial_capital || 0)
   const cashValue = Number(agent.cash_balance || totalValue)
+  const hasExistingPositions = holdings.some(
+    (holding) => Number(holding.quantity || 0) > 0
+  )
+  const workflowName = hasExistingPositions
+    ? "capital_deployment"
+    : "initial_build"
+  const workflowLabel = hasExistingPositions
+    ? "capital deployment from excess cash"
+    : "initial build"
   const universeSymbols = getUniverseSymbols(universe)
   const latestValuation = valuations[valuations.length - 1]
   const holdingsText =
@@ -52,11 +61,12 @@ export function buildInitialPortfolioPrompt({
       : "No previous runs."
 
   return `
-You are constructing the FIRST portfolio for an AI investment simulation agent.
-This is an initial build, not a rebalance. This is simulation output, not financial advice.
+You are constructing a portfolio for an AI investment simulation agent.
+This is ${workflowLabel}, not a normal rebalance. This is simulation output, not financial advice.
 
 Primary objective:
-- Build a complete starting portfolio from cash using the configured target markets and active investment universe.
+- Build a complete target portfolio from available cash using the configured target markets and active investment universe.
+- If positions already exist, keep suitable in-scope holdings and deploy excess cash around them; do not ask for a staged rebalance only because cash deployment is large.
 - The output should be actionable enough that a human can use each BUY action to populate a trade form, review prices/quantity, and execute manually.
 - Do not merely improve the cash ratio. The target allocation must put cash inside the configured cash range.
 
@@ -85,7 +95,7 @@ Risk policy:
 - Single stock target must not exceed ${riskPolicy?.max_single_stock_pct ?? "?"}%.
 - ETF target must not exceed ${riskPolicy?.max_etf_pct ?? "?"}%.
 - Prohibited assets: ${riskPolicy?.prohibited_assets?.join(", ") || "None"}
-- For this initial build only, max one-trade and weekly turnover limits do NOT apply. The user is building the first portfolio from cash.
+- For this ${workflowLabel} only, max one-trade and weekly turnover limits do NOT apply. The user is deploying idle cash into the intended portfolio structure.
 - Validator enabled: ${workflowConfig?.validator_enabled ? "yes" : "no"}.
 
 Active investment universe:
@@ -112,8 +122,8 @@ ${recentRunsText}
 
 Return ONLY valid JSON with this shape:
 {
-  "proposal_type": "initial_build",
-  "workflow": "initial_build",
+  "proposal_type": "${workflowName}",
+  "workflow": "${workflowName}",
   "summary": "short sentence",
   "market_summary": "brief market context",
   "portfolio_diagnosis": "why this starting allocation fits the agent",

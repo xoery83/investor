@@ -5,6 +5,7 @@ import Link from "next/link"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatCompactCurrencyAmount } from "../../src/lib/format/currency"
 import { supabase } from "../../src/lib/supabase"
 
 type AgentStrategy = {
@@ -15,6 +16,7 @@ type AgentStrategy = {
   visibility: string
   lifecycle_status: string
   current_value: number
+  base_currency?: string
   rebalance_frequency: string
   creator_display_name?: string
   follower_count?: number
@@ -167,7 +169,10 @@ export default function StrategiesPage() {
                     <TableCell className="capitalize">{agent.visibility}</TableCell>
                     <TableCell className="tabular-nums">{agent.follower_count || 0}</TableCell>
                     <TableCell className="pr-4 text-right tabular-nums">
-                      {formatCurrency(agent.current_value)}
+                      {formatCompactCurrencyAmount(
+                        agent.current_value,
+                        agent.base_currency || "USD"
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -189,14 +194,6 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       </CardHeader>
     </Card>
   )
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0))
 }
 
 function formatToken(value: string) {

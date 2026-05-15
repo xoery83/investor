@@ -139,6 +139,10 @@ export async function POST(
       profile,
       riskPolicy,
     })
+    const isCapitalDeploymentCandidate =
+      requestedRunType === "rebalance" &&
+      diagnostic.workflow === "deploy_excess_cash" &&
+      !diagnostic.manual_required
 
     if (isResearchRunType(runType)) {
       const result = await runResearchAgent({
@@ -193,9 +197,13 @@ export async function POST(
     }
 
     const validationMode =
-      runType === "initial_build" ? "initial_build" : "rebalance"
+      runType === "initial_build"
+        ? "initial_build"
+        : isCapitalDeploymentCandidate
+          ? "capital_deployment"
+          : "rebalance"
 
-    let result = runType === "initial_build"
+    let result = runType === "initial_build" || isCapitalDeploymentCandidate
       ? await runInitialBuildAgent({
           agent,
           holdings: holdingsList,
@@ -261,7 +269,11 @@ export async function POST(
       })
     }
 
-    if (runType === "rebalance" && validation.violations.length > 0) {
+    if (
+      runType === "rebalance" &&
+      !isCapitalDeploymentCandidate &&
+      validation.violations.length > 0
+    ) {
       result = buildStagedRemediationProposal({
         agent,
         holdings: holdingsList,

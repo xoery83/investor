@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatCurrencyAmount } from "../../src/lib/format/currency"
 import { supabase } from "../../src/lib/supabase"
 
 type UserAgentPosition = {
@@ -13,6 +14,7 @@ type UserAgentPosition = {
   average_nav: number
   current_nav: number
   market_value: number
+  currency?: string
   status: string
   agents?: {
     id: string
@@ -134,6 +136,7 @@ export default function PortfolioPage() {
   const follows = payload?.follows || []
   const followedWithoutPosition = follows.filter((follow) => !follow.has_position)
   const followedWithPosition = follows.filter((follow) => follow.has_position)
+  const portfolioCurrency = payload?.portfolio?.currency || "USD"
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 pt-8 sm:px-6 lg:px-10">
@@ -162,15 +165,15 @@ export default function PortfolioPage() {
           <section className="mb-6 grid gap-4 md:grid-cols-3">
             <MetricCard
               label="Net Asset Value"
-              value={formatCurrency(summary?.total_value || 0)}
+              value={formatCurrency(summary?.total_value || 0, portfolioCurrency)}
             />
             <MetricCard
               label="Cash Balance"
-              value={formatCurrency(summary?.cash_balance || 0)}
+              value={formatCurrency(summary?.cash_balance || 0, portfolioCurrency)}
             />
             <MetricCard
               label="Agent Positions"
-              value={formatCurrency(summary?.positions_value || 0)}
+              value={formatCurrency(summary?.positions_value || 0, portfolioCurrency)}
             />
           </section>
 
@@ -193,7 +196,7 @@ export default function PortfolioPage() {
                     <span>Status</span>
                     <span>Shares</span>
                     <span>Avg NAV</span>
-                    <span>Market Value</span>
+                    <span>Market Value ({portfolioCurrency})</span>
                     <span className="text-right">Action</span>
                   </div>
 
@@ -217,8 +220,18 @@ export default function PortfolioPage() {
                         {formatToken(position.status)}
                       </span>
                       <span>{formatNumber(position.shares)}</span>
-                      <span>{formatCurrency(position.average_nav)}</span>
-                      <span>{formatCurrency(position.market_value)}</span>
+                      <span>
+                        {formatCurrency(
+                          position.average_nav,
+                          position.currency || portfolioCurrency
+                        )}
+                      </span>
+                      <span>
+                        {formatCurrency(
+                          position.market_value,
+                          position.currency || portfolioCurrency
+                        )}
+                      </span>
                       <span className="text-right">
                         <button
                           type="button"
@@ -314,12 +327,10 @@ function MetricCard({ label, value }: { label: string; value: string }) {
   )
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+function formatCurrency(value: number, currency: string) {
+  return formatCurrencyAmount(value, currency, {
     maximumFractionDigits: 2,
-  }).format(Number(value || 0))
+  })
 }
 
 function formatNumber(value: number) {

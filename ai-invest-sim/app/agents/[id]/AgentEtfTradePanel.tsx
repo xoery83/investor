@@ -4,6 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
+import { formatCurrencyAmount } from "../../../src/lib/format/currency"
 import { supabase } from "../../../src/lib/supabase"
 
 export default function AgentEtfTradePanel({
@@ -54,9 +55,10 @@ export default function AgentEtfTradePanel({
     }
 
     setMessage(
-      `Bought ${Number(data.trade?.shares || 0).toLocaleString()} shares at NAV $${Number(
-        data.trade?.nav || 0
-      ).toFixed(2)}.`
+      `Bought ${Number(data.trade?.shares || 0).toLocaleString()} shares at NAV ${formatCurrencyAmount(
+        Number(data.trade?.nav || 0),
+        data.trade?.currency || "USD"
+      )}.`
     )
     setLoading(false)
     router.refresh()
@@ -70,7 +72,7 @@ export default function AgentEtfTradePanel({
         <div>
           <h2 className="text-lg font-semibold">Simulated Agent ETF</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Allocate cash from your personal simulator portfolio into this agent.
+            Allocate USD simulator cash from your personal portfolio into this agent.
           </p>
         </div>
         <Link href="/portfolio" className="text-sm text-blue-600 hover:text-blue-700">
@@ -89,6 +91,9 @@ export default function AgentEtfTradePanel({
             onChange={(event) => setAmount(Number(event.target.value))}
             className="w-44 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2"
           />
+          <span className="mt-1 block text-xs text-slate-500">
+            Amount is denominated in USD simulator cash.
+          </span>
         </label>
         <button
           type="button"

@@ -9,6 +9,7 @@ import FollowAgentButton from "./FollowAgentButton"
 import type { TradeDraft } from "./AgentPortfolioPanel"
 import RunAgentButton from "./RunAgentButton"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
+import { formatCurrencyAmount } from "../../../src/lib/format/currency"
 import { supabase } from "../../../src/lib/supabase"
 import type {
   Agent,
@@ -81,6 +82,7 @@ export default function AgentDashboardClient({
     "profile" | "workflow" | null
   >(null)
   const tradeSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const baseCurrency = agent.base_currency || "USD"
   const initialMarketValue = Number(agent.initial_capital || 0)
   const followerPositionValue = Number(agent.follower_position_value || 0)
   const displayFollowing = followOverride ?? isFollowing
@@ -189,7 +191,7 @@ export default function AgentDashboardClient({
               </span>
               , From {formatShortDate(agent.created_at)} with initial value{" "}
               <span className="font-medium text-slate-800">
-                {formatCurrency(initialMarketValue)}
+                {formatCurrency(initialMarketValue, baseCurrency)}
               </span>
               .
             </p>
@@ -230,23 +232,23 @@ export default function AgentDashboardClient({
         <section className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
           <SummaryCard
             label="Total Portfolio Value"
-            value={formatCurrency(summary.total_value)}
-            detail={`${formatSignedCurrency(valueChange)} (${formatSignedPercent(valueChangePct)}) since inception`}
+            value={formatCurrency(summary.total_value, baseCurrency)}
+            detail={`${formatSignedCurrency(valueChange, baseCurrency)} (${formatSignedPercent(valueChangePct)}) since inception`}
             detailTone={valueChange >= 0 ? "positive" : "negative"}
           />
           <SummaryCard
             label="Agent ETF Capital"
-            value={formatCurrency(followerPositionValue)}
-            detail="Simulated capital allocated by followers"
+            value={formatCurrency(followerPositionValue, "USD")}
+            detail="Follower simulator capital, denominated in USD"
           />
           <SummaryCard
             label="Cash Balance"
-            value={formatCurrency(summary.cash_balance)}
+            value={formatCurrency(summary.cash_balance, baseCurrency)}
             detail={`${cashWeight.toFixed(2)}% of portfolio`}
           />
           <SummaryCard
             label="Holdings Value"
-            value={formatCurrency(summary.holdings_value)}
+            value={formatCurrency(summary.holdings_value, baseCurrency)}
           />
         </section>
 
@@ -369,12 +371,13 @@ export default function AgentDashboardClient({
             initialValuations={valuations}
             tradeDraft={tradeDraft}
             totalValue={summary.total_value}
+            baseCurrency={baseCurrency}
             onUseHolding={loadHoldingIntoTradeForm}
             onHoldingsUpdated={setCurrentHoldings}
-          onSummaryUpdated={setSummary}
-          canTrade={permissions.canTrade}
-          canRefreshValuation={permissions.canEdit}
-        />
+            onSummaryUpdated={setSummary}
+            canTrade={permissions.canTrade}
+            canRefreshValuation={permissions.canEdit}
+          />
         </div>
 
         <section className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6">
@@ -398,10 +401,10 @@ export default function AgentDashboardClient({
                     agentId={agent.id}
                     totalValue={summary.total_value}
                     holdings={currentHoldings}
-                    canApplyInitialBuild={permissions.canTrade}
+                    canApplyProposal={permissions.canTrade || permissions.canEdit}
                     applied={appliedProposalIds.has(proposal.id)}
                     onUseAction={loadTradeDraft}
-                    onInitialBuildApplied={(payload) =>
+                    onProposalApplied={(payload) =>
                       handleInitialBuildApplied(proposal.id, payload)
                     }
                   />
@@ -643,19 +646,19 @@ function TradeProposalCard({
   agentId,
   totalValue,
   holdings,
-  canApplyInitialBuild,
+  canApplyProposal,
   applied,
   onUseAction,
-  onInitialBuildApplied,
+  onProposalApplied,
 }: {
   proposal: TradeProposalWithValidation
   agentId: string
   totalValue: number
   holdings: UpdatedHolding[]
-  canApplyInitialBuild?: boolean
+  canApplyProposal?: boolean
   applied?: boolean
   onUseAction?: (draft: Omit<TradeDraft, "key">) => void
-  onInitialBuildApplied?: (
+  onProposalApplied?: (
     payload: PortfolioSummary & { holdings: UpdatedHolding[] }
   ) => void
 }) {
@@ -672,9 +675,16 @@ function TradeProposalCard({
     : []
   const actions = readActions(proposalBody.suggested_actions)
   const allocations = readAllocations(proposalBody.target_allocation)
-  const isInitialBuildProposal = proposalBody.proposal_type === "initial_build"
-  const initialBuildBuyActions = actions.filter(
-    (action) => action.action === "buy" && action.symbol.toUpperCase() !== "CASH"
+  const executableActions = actions.filter(
+    (action) =>
+      (action.action === "buy" || action.action === "sell") &&
+      action.symbol.toUpperCase() !== "CASH"
+  )
+  const isConstructionProposal =
+    proposalBody.proposal_type === "initial_build" ||
+    proposalBody.proposal_type === "capital_deployment"
+  const initialBuildBuyActions = executableActions.filter(
+    (action) => action.action === "buy"
   )
   const existingSymbols = new Set(
     holdings
@@ -683,7 +693,8 @@ function TradeProposalCard({
   )
   const initialBuildAlreadyApplied =
     Boolean(applied) ||
-    (initialBuildBuyActions.length > 0 &&
+    (isConstructionProposal &&
+      initialBuildBuyActions.length > 0 &&
       initialBuildBuyActions.every((action) =>
         existingSymbols.has(action.symbol.toUpperCase())
       ))
@@ -693,8 +704,11 @@ function TradeProposalCard({
     validation?.validation_status || proposal.validator_status || "pending"
   const approved =
     validatorStatus === "approved" || validation?.final_action_allowed === true
+  const proposalExecuted = proposal.status === "executed"
   const statusLabel = approved
-    ? residualPolicyGaps.length > 0
+    ? proposalExecuted
+      ? "Executed"
+      : residualPolicyGaps.length > 0
       ? "Step approved"
       : "Risk approved"
     : formatSlug(validatorStatus)
@@ -721,36 +735,46 @@ function TradeProposalCard({
         </span>
       </div>
 
-      {isInitialBuildProposal &&
-        approved &&
-        canApplyInitialBuild &&
-        initialBuildBuyActions.length > 0 && (
+      {approved &&
+        canApplyProposal &&
+        executableActions.length > 0 &&
+        !manualActions.length &&
+        !violations.length && (
           <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
             <button
               type="button"
               onClick={() =>
-                applyInitialBuildProposal({
+                applyTradeProposal({
                   agentId,
+                  proposalId: proposal.id,
                   totalValue,
-                  actions: initialBuildBuyActions,
-                  onComplete: onInitialBuildApplied,
+                  holdings,
+                  actions: executableActions,
+                  onComplete: onProposalApplied,
                   setLoading: setBuildLoading,
                   setError: setBuildError,
                 })
               }
-              disabled={buildLoading || initialBuildAlreadyApplied}
+              disabled={
+                buildLoading ||
+                initialBuildAlreadyApplied ||
+                Boolean(applied) ||
+                proposalExecuted
+              }
               className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-emerald-300"
             >
               {buildLoading
-                ? "Building..."
-                : initialBuildAlreadyApplied
-                  ? "Portfolio built"
-                  : "Build portfolio"}
+                ? "Executing..."
+                : initialBuildAlreadyApplied || applied || proposalExecuted
+                  ? "Proposal executed"
+                  : isConstructionProposal
+                    ? "Build portfolio"
+                    : "Execute proposal"}
             </button>
             <p className="text-sm text-emerald-800">
-              {initialBuildAlreadyApplied
-                ? "This initial build has already been applied to current holdings."
-                : "Execute all initial BUY actions using current market quotes."}
+              {initialBuildAlreadyApplied || applied || proposalExecuted
+                ? "This approved proposal has already been applied in this session."
+                : "Execute approved BUY/SELL actions using current market quotes."}
             </p>
           </div>
         )}
@@ -914,16 +938,20 @@ function TradeProposalCard({
 
 type ProposalAction = ReturnType<typeof readActions>[number]
 
-async function applyInitialBuildProposal({
+async function applyTradeProposal({
   agentId,
+  proposalId,
   totalValue,
+  holdings,
   actions,
   onComplete,
   setLoading,
   setError,
 }: {
   agentId: string
+  proposalId: string
   totalValue: number
+  holdings: UpdatedHolding[]
   actions: ProposalAction[]
   onComplete?: (payload: PortfolioSummary & { holdings: UpdatedHolding[] }) => void
   setLoading: (loading: boolean) => void
@@ -944,6 +972,7 @@ async function applyInitialBuildProposal({
       null
 
     for (const action of actions) {
+      const tradeAction = action.action === "sell" ? "sell" : "buy"
       const quoteData = await lookupQuote(action.symbol)
       if (!quoteData?.success) {
         throw new Error(
@@ -964,6 +993,17 @@ async function applyInitialBuildProposal({
       const tradeAmount = totalValue > 0 ? (tradePct / 100) * totalValue : 0
 
       if (tradeAmount <= 0) continue
+      const existingHolding = holdings.find(
+        (holding) => holding.symbol.toUpperCase() === action.symbol.toUpperCase()
+      )
+      const sellQuantity =
+        tradeAction === "sell" && existingHolding
+          ? estimateSellQuantity({
+              holding: existingHolding,
+              tradePct,
+              tradeAmount,
+            })
+          : 0
 
       const res = await fetch(`/api/agents/${agentId}/holdings`, {
         method: "POST",
@@ -972,21 +1012,25 @@ async function applyInitialBuildProposal({
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          action: "buy",
-          symbol: action.symbol,
-          asset_name: quote.name || action.symbol,
-          asset_type: inferAssetType(String(quote.assetType || ""), action.asset_type),
-          quantity: 0,
-          target_market_value_base: tradeAmount,
+          action: tradeAction,
+          proposal_id: proposalId,
+          symbol: String(quote.symbol || action.symbol),
+          asset_name: quote.name || existingHolding?.asset_name || action.symbol,
+          asset_type: inferAssetType(
+            String(quote.assetType || ""),
+            action.asset_type || existingHolding?.asset_type
+          ),
+          quantity: tradeAction === "sell" ? sellQuantity : 0,
+          target_market_value_base: tradeAction === "buy" ? tradeAmount : 0,
           average_cost: price,
           current_price: price,
-          currency: quote.currency || "USD",
+          currency: quote.currency || existingHolding?.currency || "USD",
         }),
       })
 
       const data = await res.json()
       if (!data.success) {
-        throw new Error(data.error || `Failed to buy ${action.symbol}.`)
+        throw new Error(data.error || `Failed to ${tradeAction} ${action.symbol}.`)
       }
 
       latestPayload = {
@@ -998,6 +1042,7 @@ async function applyInitialBuildProposal({
     }
 
     if (latestPayload) {
+      await markProposalExecuted({ agentId, proposalId, token })
       onComplete?.(latestPayload)
       clearAgentDetailCache(agentId)
     }
@@ -1005,11 +1050,61 @@ async function applyInitialBuildProposal({
     setError(
       error instanceof Error
         ? error.message
-        : "Failed to apply initial build."
+        : "Failed to apply trade proposal."
     )
   } finally {
     setLoading(false)
   }
+}
+
+async function markProposalExecuted({
+  agentId,
+  proposalId,
+  token,
+}: {
+  agentId: string
+  proposalId: string
+  token: string
+}) {
+  const res = await fetch(
+    `/api/agents/${agentId}/trade-proposals/${proposalId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ status: "executed" }),
+    }
+  )
+  const data = await res.json()
+
+  if (!data.success) {
+    throw new Error(data.error || "Failed to mark proposal as executed.")
+  }
+}
+
+function estimateSellQuantity({
+  holding,
+  tradePct,
+  tradeAmount,
+}: {
+  holding: UpdatedHolding
+  tradePct: number
+  tradeAmount: number
+}) {
+  const currentWeight = Number(holding.weight || 0)
+  const quantity = Number(holding.quantity || 0)
+  const priceBase = Number(
+    holding.current_price_base ||
+      Number(holding.current_price || 0) * Number(holding.fx_rate_to_base || 1)
+  )
+
+  if (currentWeight > 0 && quantity > 0) {
+    return quantity * Math.min(1, tradePct / currentWeight)
+  }
+
+  return priceBase > 0 ? tradeAmount / priceBase : 0
 }
 
 async function lookupQuote(symbol: string) {
@@ -1131,16 +1226,15 @@ function StatusPill({ value }: { value: string }) {
   )
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+function formatCurrency(value: number, currency?: string) {
+  return formatCurrencyAmount(value, currency, {
     maximumFractionDigits: 2,
-  }).format(Number(value || 0))
+    minimumFractionDigits: 2,
+  })
 }
 
-function formatSignedCurrency(value: number) {
-  const absolute = formatCurrency(Math.abs(value))
+function formatSignedCurrency(value: number, currency?: string) {
+  const absolute = formatCurrency(Math.abs(value), currency)
 
   if (value > 0) return `+${absolute}`
   if (value < 0) return `-${absolute}`

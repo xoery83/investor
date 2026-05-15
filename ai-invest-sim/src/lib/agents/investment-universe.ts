@@ -6,6 +6,7 @@ import type {
   AgentProfile,
   RiskPolicy,
 } from "../types/agent"
+import { normalizeMarketSymbol } from "../market/normalize-symbol"
 
 type UniverseGenerationInput = {
   agent: Agent
@@ -315,7 +316,7 @@ function isChinaTechProfile(text: string) {
 
 function uniqueSymbols(values: string[]) {
   return Array.from(
-    new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean))
+    new Set(values.map((value) => normalizeMarketSymbol(value)).filter(Boolean))
   )
 }
 

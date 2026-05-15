@@ -5,6 +5,7 @@ import * as React from "react"
 import AddHoldingForm from "./AddHoldingForm"
 import ValuationPanel from "./ValuationPanel"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
+import { formatCurrencyAmount } from "../../../src/lib/format/currency"
 import type { AgentValuation } from "../../../src/lib/types/agent"
 
 export type PortfolioSummary = {
@@ -29,6 +30,7 @@ type AgentPortfolioPanelProps = {
   initialValuations: AgentValuation[]
   tradeDraft?: TradeDraft | null
   totalValue: number
+  baseCurrency: string
   onUseHolding?: (holding: UpdatedHolding) => void
   onHoldingsUpdated?: (holdings: UpdatedHolding[]) => void
   onSummaryUpdated?: (summary: PortfolioSummary) => void
@@ -42,6 +44,7 @@ export default function AgentPortfolioPanel({
   initialValuations,
   tradeDraft,
   totalValue,
+  baseCurrency,
   onUseHolding,
   onHoldingsUpdated,
   onSummaryUpdated,
@@ -80,11 +83,16 @@ export default function AgentPortfolioPanel({
         </div>
 
         {activeTab === "holdings" ? (
-          <HoldingsTable holdings={holdings} onUseHolding={onUseHolding} />
+          <HoldingsTable
+            holdings={holdings}
+            baseCurrency={baseCurrency}
+            onUseHolding={onUseHolding}
+          />
         ) : (
           <ValuationPanel
             agentId={agentId}
             initialValuations={initialValuations}
+            baseCurrency={baseCurrency}
             embedded
             onHoldingsUpdated={onHoldingsUpdated}
             onSummaryUpdated={onSummaryUpdated}
@@ -99,6 +107,7 @@ export default function AgentPortfolioPanel({
           holdings={holdings}
           tradeDraft={tradeDraft}
           totalValue={totalValue}
+          baseCurrency={baseCurrency}
           onTradeCompleted={(payload) => {
             onHoldingsUpdated?.(payload.holdings)
             onSummaryUpdated?.({
@@ -115,9 +124,11 @@ export default function AgentPortfolioPanel({
 
 function HoldingsTable({
   holdings,
+  baseCurrency,
   onUseHolding,
 }: {
   holdings: UpdatedHolding[]
+  baseCurrency: string
   onUseHolding?: (holding: UpdatedHolding) => void
 }) {
   return (
@@ -135,7 +146,7 @@ function HoldingsTable({
             <span>CCY</span>
             <span>FX</span>
             <span>Source</span>
-            <span className="text-right">Base Value</span>
+            <span className="text-right">Base Value ({baseCurrency})</span>
           </div>
 
           {holdings.map((holding) => (
@@ -156,7 +167,12 @@ function HoldingsTable({
               </span>
               <span>{formatShares(holding.quantity)}</span>
               <span>{Number(holding.weight || 0).toFixed(2)}%</span>
-              <span>{Number(holding.current_price || 0).toLocaleString()}</span>
+              <span>
+                {formatCurrencyAmount(
+                  Number(holding.current_price || 0),
+                  holding.currency || baseCurrency
+                )}
+              </span>
               <span className="font-mono text-xs">
                 {(holding.currency || "USD").toUpperCase()}
               </span>
@@ -168,9 +184,10 @@ function HoldingsTable({
                 />
               </span>
               <span className="text-right">
-                ${Number(
-                  holding.market_value_base || holding.market_value || 0
-                ).toLocaleString()}
+                {formatCurrencyAmount(
+                  Number(holding.market_value_base || holding.market_value || 0),
+                  baseCurrency
+                )}
               </span>
             </div>
           ))}

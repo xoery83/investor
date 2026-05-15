@@ -15,6 +15,7 @@ import type {
   TradeProposalWithValidation,
   WorkflowConfig,
 } from "../types/agent"
+import { normalizeMarketSymbol } from "../market/normalize-symbol"
 
 export type PublicationReadinessCheck = {
   key: string
@@ -212,7 +213,7 @@ export async function validateAgentPublicationReadiness({
   if (universe && holdings.length > 0) {
     const allowedSymbols = universeSymbols(universe)
     const outOfUniverse = holdings.filter(
-      (holding) => !allowedSymbols.has(String(holding.symbol || "").toUpperCase())
+      (holding) => !allowedSymbols.has(normalizeMarketSymbol(String(holding.symbol || "")))
     )
     addCheck(
       "holdings_in_universe",
@@ -300,7 +301,7 @@ function universeSymbols(universe: AgentInvestmentUniverse) {
       ...arrayValue(universe.core_etfs),
       ...arrayValue(universe.core_stocks),
       ...arrayValue(universe.watchlist),
-    ].map((symbol) => symbol.toUpperCase())
+    ].map((symbol) => normalizeMarketSymbol(symbol))
   )
 }
 
@@ -396,21 +397,27 @@ function universeMatchesTargetMarkets(
   const targetText = targetMarkets.join(" ").toLowerCase()
   const scopeText = marketScope.join(" ").toLowerCase()
 
-  if (containsUsMarket(targetText)) return containsUsMarket(scopeText)
-  if (targetText.includes("australia")) {
-    return scopeText.includes("australia") || scopeText.includes("asx")
-  }
   if (
     targetText.includes("china") ||
+    targetText.includes("chinese") ||
     targetText.includes("hong kong") ||
-    targetText.includes("hk")
+    targetText.includes("hk") ||
+    targetText.includes("中国") ||
+    targetText.includes("香港")
   ) {
     return (
       scopeText.includes("china") ||
+      scopeText.includes("chinese") ||
       scopeText.includes("hong kong") ||
       scopeText.includes("hk") ||
-      scopeText.includes("adr")
+      scopeText.includes("adr") ||
+      scopeText.includes("中国") ||
+      scopeText.includes("香港")
     )
+  }
+  if (containsUsMarket(targetText)) return containsUsMarket(scopeText)
+  if (targetText.includes("australia")) {
+    return scopeText.includes("australia") || scopeText.includes("asx")
   }
 
   return targetMarkets.some((market) => {

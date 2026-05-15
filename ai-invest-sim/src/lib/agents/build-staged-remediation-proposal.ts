@@ -7,6 +7,7 @@ import type {
 } from "../types/agent"
 import type { PortfolioDiagnostic } from "./diagnose-portfolio"
 import { getUniverseBuyCandidates } from "./investment-universe"
+import { formatCurrencyAmount } from "../format/currency"
 
 type DraftAction = {
   action: "buy" | "sell"
@@ -232,7 +233,10 @@ export function buildManualInterventionProposal({
         ],
         expected_policy_gap_after_step:
           diagnostic.deployable_cash_amount > 0
-            ? `Approximately ${formatCurrency(diagnostic.deployable_cash_amount)} may be deployable after the manual step, subject to updated prices and cash balance.`
+            ? `Approximately ${formatCurrency(
+                diagnostic.deployable_cash_amount,
+                diagnostic.base_currency
+              )} may be deployable after the manual step, subject to updated prices and cash balance.`
             : "The next run should proceed to normal rebalance review.",
       },
     ],
@@ -381,10 +385,8 @@ function roundWeight(value: number) {
   return Math.round(value * 100) / 100
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+function formatCurrency(value: number, currency: string) {
+  return formatCurrencyAmount(value, currency, {
     maximumFractionDigits: 0,
-  }).format(Number(value || 0))
+  })
 }

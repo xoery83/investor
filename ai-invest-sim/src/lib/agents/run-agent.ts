@@ -147,11 +147,11 @@ export async function reviseAgentRecommendation({
   profile?: AgentProfile
   universe?: AgentInvestmentUniverse | null
   diagnostic?: PortfolioDiagnostic
-  validationMode?: "rebalance" | "initial_build"
+  validationMode?: "rebalance" | "initial_build" | "capital_deployment"
 }) {
   const turnoverRules =
-    validationMode === "initial_build"
-      ? "- This is initial portfolio construction from cash. Do not enforce max one-trade or weekly turnover limits; do enforce final allocation limits.\n"
+    validationMode === "initial_build" || validationMode === "capital_deployment"
+      ? "- This is portfolio construction from excess cash. Do not enforce max one-trade or weekly turnover limits; do enforce final allocation limits, target markets, and concentration rules.\n"
       : `- Any one trade must not exceed ${riskPolicy.max_one_trade_pct}% of portfolio value.
 - Total turnover must not exceed ${riskPolicy.max_weekly_turnover_pct}%.
 `

@@ -102,6 +102,7 @@ export async function POST(request: Request) {
     philosophy,
     risk_level,
     initial_capital,
+    base_currency,
     rebalance_frequency,
     profile,
     risk_policy,
@@ -159,6 +160,9 @@ export async function POST(request: Request) {
     user: requestUser,
     activeAgentCount: activeAgentCount || 0,
   })
+  const resolvedBaseCurrency = String(base_currency || "USD")
+    .trim()
+    .toUpperCase()
   const resolvedLifecycleStatus =
     lifecycle_status === "active" || !lifecycle_status
       ? activePermission.allowed
@@ -183,6 +187,7 @@ export async function POST(request: Request) {
       initial_capital,
       cash_balance: initial_capital,
       current_value: initial_capital,
+      base_currency: resolvedBaseCurrency,
       rebalance_frequency: rebalance_frequency || "daily",
       is_active: resolvedLifecycleStatus === "active",
     })
@@ -201,6 +206,7 @@ export async function POST(request: Request) {
     total_value: initial_capital,
     cash_value: initial_capital,
     holdings_value: 0,
+    base_currency: resolvedBaseCurrency,
     daily_return: 0,
     cumulative_return: 0,
     annualized_return: 0,

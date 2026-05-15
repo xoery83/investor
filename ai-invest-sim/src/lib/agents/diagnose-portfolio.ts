@@ -4,6 +4,7 @@ import type {
   AgentProfile,
   RiskPolicy,
 } from "../types/agent"
+import { formatCurrencyAmount, normalizeDisplayCurrency } from "../format/currency"
 
 export type PortfolioWorkflow =
   | "manual_reduce_concentration"
@@ -16,6 +17,7 @@ export type PortfolioDiagnostic = {
   cash_weight: number
   deployable_cash_amount: number
   deployable_cash_pct: number
+  base_currency: string
   manual_required: boolean
   manual_actions: string[]
   issues: string[]
@@ -35,6 +37,7 @@ export function diagnosePortfolio({
 }): PortfolioDiagnostic {
   const totalValue = Number(agent.current_value || 0)
   const cashBalance = Number(agent.cash_balance || 0)
+  const baseCurrency = normalizeDisplayCurrency(agent.base_currency)
   const cashWeight =
     totalValue > 0
       ? roundWeight((cashBalance / totalValue) * 100)
@@ -72,7 +75,7 @@ export function diagnosePortfolio({
         Number(holding.weight || 0) - maxSingleStockPct
       )
       const reductionAmount = roundCurrency((reductionPct / 100) * totalValue)
-      return `Manually reduce ${holding.symbol.toUpperCase()} by about ${formatCurrency(reductionAmount)} (${reductionPct}% of portfolio) before automated deployment.`
+      return `Manually reduce ${holding.symbol.toUpperCase()} by about ${formatCurrency(reductionAmount, baseCurrency)} (${reductionPct}% of portfolio) before automated deployment.`
     })
 
     return {
@@ -82,6 +85,7 @@ export function diagnosePortfolio({
       cash_weight: cashWeight,
       deployable_cash_amount: deployableCashAmount,
       deployable_cash_pct: deployableCashPct,
+      base_currency: baseCurrency,
       manual_required: true,
       manual_actions: manualActions,
       issues,
@@ -97,10 +101,11 @@ export function diagnosePortfolio({
       cash_weight: cashWeight,
       deployable_cash_amount: deployableCashAmount,
       deployable_cash_pct: deployableCashPct,
+      base_currency: baseCurrency,
       manual_required: false,
       manual_actions: [],
       issues,
-      prompt_instruction: `The current portfolio has too much cash. Recommend a concrete new holdings sleeve for approximately ${formatCurrency(deployableCashAmount)} (${deployableCashPct}% of portfolio) using the agent's target markets and allowed assets. Prefer diversified ETFs plus selected high-quality stocks when appropriate. Do not leave excess cash idle.`,
+      prompt_instruction: `The current portfolio has too much cash. Recommend a concrete new holdings sleeve for approximately ${formatCurrency(deployableCashAmount, baseCurrency)} (${deployableCashPct}% of portfolio) using the agent's target markets and allowed assets. Prefer diversified ETFs plus selected high-quality stocks when appropriate. Do not leave excess cash idle.`,
     }
   }
 
@@ -111,6 +116,7 @@ export function diagnosePortfolio({
     cash_weight: cashWeight,
     deployable_cash_amount: 0,
     deployable_cash_pct: 0,
+    base_currency: baseCurrency,
     manual_required: false,
     manual_actions: [],
     issues,
@@ -158,10 +164,8 @@ function roundCurrency(value: number) {
   return Math.round(value * 100) / 100
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+function formatCurrency(value: number, currency: string) {
+  return formatCurrencyAmount(value, currency, {
     maximumFractionDigits: 0,
-  }).format(Number(value || 0))
+  })
 }
