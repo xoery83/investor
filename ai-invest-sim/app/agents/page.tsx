@@ -15,6 +15,8 @@ type AgentListItem = Agent & {
   follower_position_value?: number
 }
 
+
+
 type SourceFilter = "all" | "system" | "user"
 type VisibilityFilter = "all" | Agent["visibility"]
 type LifecycleFilter = "all" | Agent["lifecycle_status"]
