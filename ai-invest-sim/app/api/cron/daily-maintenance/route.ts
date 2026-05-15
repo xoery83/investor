@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 
 import { validateCronRequest } from "../../../../src/lib/cron/guard"
 import { refreshPublicAgentValuationsCron } from "../../../../src/lib/cron/refresh-public-agent-valuations"
+import { runPublicAgentResearchCron } from "../../../../src/lib/cron/run-public-agent-research"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -18,22 +19,28 @@ export async function GET(request: Request) {
   }
 
   try {
-    const results = await refreshPublicAgentValuationsCron({ supabase })
+    const valuationResults = await refreshPublicAgentValuationsCron({
+      supabase,
+    })
+    const dailyResearchResults = await runPublicAgentResearchCron({
+      supabase,
+      runType: "daily",
+    })
 
     return NextResponse.json({
       success: true,
-      job: "refresh-valuations",
-      processed: results.length,
-      results,
+      job: "daily-maintenance",
+      valuation_processed: valuationResults.length,
+      daily_research_processed: dailyResearchResults.length,
+      valuation_results: valuationResults,
+      daily_research_results: dailyResearchResults,
     })
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error
-            ? error.message
-            : "Valuation refresh cron failed.",
+          error instanceof Error ? error.message : "Daily maintenance failed.",
       },
       { status: 500 }
     )

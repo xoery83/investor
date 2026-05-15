@@ -64,14 +64,21 @@ export type I18nKey = keyof typeof messages.en
 const I18nContext = createContext<I18nContextValue | null>(null)
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<AppLocale>(() => {
-    if (typeof window === "undefined") return "en"
+  const [locale, setLocaleState] = useState<AppLocale>("en")
 
-    const saved = window.localStorage.getItem(STORAGE_KEY)
-    if (saved === "zh" || saved === "en") return saved
+  useEffect(() => {
+    window.setTimeout(() => {
+      const saved = window.localStorage.getItem(STORAGE_KEY)
+      if (saved === "zh" || saved === "en") {
+        setLocaleState(saved)
+        return
+      }
 
-    return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en"
-  })
+      if (navigator.language.toLowerCase().startsWith("zh")) {
+        setLocaleState("zh")
+      }
+    }, 0)
+  }, [])
 
   const value = useMemo<I18nContextValue>(() => {
     function setLocale(nextLocale: AppLocale) {
