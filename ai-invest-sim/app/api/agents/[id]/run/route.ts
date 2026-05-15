@@ -15,6 +15,7 @@ import { diagnosePortfolio } from "../../../../../src/lib/agents/diagnose-portfo
 import {
   reviseAgentRecommendation,
   runAgent,
+  runInitialBuildAgent,
   runResearchAgent,
 } from "../../../../../src/lib/agents/run-agent"
 import { validateTradeProposal } from "../../../../../src/lib/agents/validate-trade-proposal"
@@ -43,7 +44,7 @@ export async function POST(
   const { id } = await context.params
   const requestUser = await getRequestUser(request)
   const body = await request.json().catch(() => ({}))
-  const runType = readRunType(body.run_type)
+  const requestedRunType = readRunType(body.run_type)
 
   if (!requestUser) {
     return NextResponse.json(
@@ -118,20 +119,33 @@ export async function POST(
         profile,
         riskPolicy,
       }))
+    const holdingsList = holdings || []
+    const valuationsList = valuations || []
+    const recentRunsList = recentRuns || []
+    const holdingsValue = holdingsList.reduce(
+      (sum, holding) =>
+        sum + Number(holding.market_value_base || holding.market_value || 0),
+      0
+    )
+    const isInitialBuildCandidate = holdingsList.length === 0 || holdingsValue <= 1
+    const runType =
+      requestedRunType === "rebalance" && isInitialBuildCandidate
+        ? "initial_build"
+        : requestedRunType
 
     const diagnostic = diagnosePortfolio({
       agent,
-      holdings: holdings || [],
+      holdings: holdingsList,
       profile,
       riskPolicy,
     })
 
-    if (runType !== "rebalance") {
+    if (isResearchRunType(runType)) {
       const result = await runResearchAgent({
         agent,
-        holdings: holdings || [],
-        valuations: valuations || [],
-        recentRuns: recentRuns || [],
+        holdings: holdingsList,
+        valuations: valuationsList,
+        recentRuns: recentRunsList,
         profile,
         riskPolicy,
         workflowConfig,
@@ -167,13 +181,38 @@ export async function POST(
       })
     }
 
-    let result = diagnostic.manual_required
+    if (runType === "initial_build" && !isInitialBuildCandidate) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Initial build is only available before this agent has active holdings. Use Rebalance instead.",
+        },
+        { status: 400 }
+      )
+    }
+
+    const validationMode =
+      runType === "initial_build" ? "initial_build" : "rebalance"
+
+    let result = runType === "initial_build"
+      ? await runInitialBuildAgent({
+          agent,
+          holdings: holdingsList,
+          valuations: valuationsList,
+          recentRuns: recentRunsList,
+          profile,
+          riskPolicy,
+          workflowConfig,
+          universe,
+        })
+      : diagnostic.manual_required
       ? buildManualInterventionProposal({ diagnostic })
       : await runAgent({
           agent,
-          holdings: holdings || [],
-          valuations: valuations || [],
-          recentRuns: recentRuns || [],
+          holdings: holdingsList,
+          valuations: valuationsList,
+          recentRuns: recentRunsList,
           profile,
           riskPolicy,
           workflowConfig,
@@ -184,10 +223,11 @@ export async function POST(
     let validation = validateTradeProposal({
       agent,
       proposal: result,
-      holdings: holdings || [],
+      holdings: holdingsList,
       riskPolicy,
       profile,
       universe,
+      validationMode,
     })
 
     let revisionAttempt = 0
@@ -208,21 +248,23 @@ export async function POST(
         profile,
         universe,
         diagnostic,
+        validationMode,
       })
       validation = validateTradeProposal({
         agent,
         proposal: result,
-        holdings: holdings || [],
+        holdings: holdingsList,
         riskPolicy,
         profile,
         universe,
+        validationMode,
       })
     }
 
-    if (validation.violations.length > 0) {
+    if (runType === "rebalance" && validation.violations.length > 0) {
       result = buildStagedRemediationProposal({
         agent,
-        holdings: holdings || [],
+        holdings: holdingsList,
         profile,
         riskPolicy,
         universe,
@@ -230,10 +272,11 @@ export async function POST(
       validation = validateTradeProposal({
         agent,
         proposal: result,
-        holdings: holdings || [],
+        holdings: holdingsList,
         riskPolicy,
         profile,
         universe,
+        validationMode,
       })
     }
 
@@ -241,7 +284,7 @@ export async function POST(
       .from("agent_runs")
       .insert({
         agent_id: id,
-        run_type: "rebalance",
+        run_type: runType,
         summary: result.summary || "Agent generated a recommendation.",
         recommendation: result,
         risks: result.risks || [],
@@ -288,6 +331,7 @@ export async function POST(
         revision_attempt: revisionAttempt,
         result: {
           ...validation.result,
+          run_type: runType,
           max_revision_attempts: maxRevisionAttempts,
         },
       })
@@ -339,9 +383,16 @@ function readRunType(value: unknown): AgentRunType {
   return value === "daily" ||
     value === "weekly" ||
     value === "escalation" ||
-    value === "rebalance"
+    value === "rebalance" ||
+    value === "initial_build"
     ? value
     : "rebalance"
+}
+
+function isResearchRunType(
+  runType: AgentRunType
+): runType is Extract<AgentRunType, "daily" | "weekly" | "escalation"> {
+  return runType === "daily" || runType === "weekly" || runType === "escalation"
 }
 
 async function getAgentProfile(agentId: string): Promise<AgentProfile> {

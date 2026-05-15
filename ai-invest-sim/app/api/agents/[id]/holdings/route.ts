@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js"
 
 import { canTradeAgentPortfolio } from "../../../../../src/lib/auth/permissions"
 import { getRequestUser } from "../../../../../src/lib/auth/server"
+import {
+  getCachedFxRate,
+  normalizeCurrency,
+} from "../../../../../src/lib/market/get-cached-fx-rate"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -33,19 +37,26 @@ export async function POST(
     quantity,
     average_cost,
     current_price,
+    currency,
+    target_market_value_base,
   } = body
 
-  const numericQuantity = Number(quantity)
   const numericAverageCost = Number(average_cost || 0)
   const numericCurrentPrice = Number(current_price)
+  const targetMarketValueBase = Number(target_market_value_base || 0)
   const tradeAction = action === "sell" ? "sell" : "buy"
   const normalizedSymbol = String(symbol || "").toUpperCase()
 
-  if (!symbol || numericQuantity <= 0 || numericCurrentPrice <= 0) {
+  if (
+    !symbol ||
+    numericCurrentPrice <= 0 ||
+    (Number(quantity) <= 0 && targetMarketValueBase <= 0)
+  ) {
     return NextResponse.json(
       {
         success: false,
-        error: "Symbol, quantity, and current price are required.",
+        error:
+          "Symbol, current price, and either quantity or target base amount are required.",
       },
       { status: 400 }
     )
@@ -72,10 +83,29 @@ export async function POST(
     )
   }
 
-  const marketValue = numericQuantity * numericCurrentPrice
+  const baseCurrency = normalizeCurrency(agent.base_currency)
+  const holdingCurrency = normalizeCurrency(currency || baseCurrency)
+  const fxRate = await getCachedFxRate(supabase, holdingCurrency, baseCurrency)
+  const localToBaseRate = fxRate.rate
+  const priceBase = numericCurrentPrice * localToBaseRate
+  const numericQuantity =
+    targetMarketValueBase > 0 && tradeAction === "buy"
+      ? targetMarketValueBase / priceBase
+      : Number(quantity)
+  const marketValueLocal = numericQuantity * numericCurrentPrice
+  const marketValueBase = marketValueLocal * localToBaseRate
+  const averageCostLocal = numericAverageCost || numericCurrentPrice
+  const averageCostBase = averageCostLocal * localToBaseRate
   const currentCash = Number(agent.cash_balance || 0)
 
-  if (tradeAction === "buy" && marketValue > currentCash) {
+  if (numericQuantity <= 0) {
+    return NextResponse.json(
+      { success: false, error: "Trade quantity must be greater than zero." },
+      { status: 400 }
+    )
+  }
+
+  if (tradeAction === "buy" && marketValueBase > currentCash) {
     return NextResponse.json(
       {
         success: false,
@@ -108,6 +138,13 @@ export async function POST(
       sum + Number(holding.quantity || 0) * Number(holding.average_cost || 0),
     0
   )
+  const existingCostBasisBase = (existingHoldings || []).reduce(
+    (sum, holding) =>
+      sum +
+      Number(holding.quantity || 0) *
+        Number(holding.average_cost_base ?? holding.average_cost ?? 0),
+    0
+  )
   let newCashBalance = currentCash
   let changedHolding = null
   let holdingError = null
@@ -131,7 +168,7 @@ export async function POST(
     }
 
     const remainingQuantity = existingQuantity - numericQuantity
-    newCashBalance = currentCash + marketValue
+    newCashBalance = currentCash + marketValueBase
 
     if (remainingQuantity <= 0.0000001) {
       const { error } = await supabase
@@ -151,9 +188,19 @@ export async function POST(
           average_cost:
             existingQuantity > 0
               ? existingCostBasis / existingQuantity
-              : numericAverageCost,
+              : averageCostLocal,
+          average_cost_base:
+            existingQuantity > 0
+              ? existingCostBasisBase / existingQuantity
+              : averageCostBase,
           current_price: numericCurrentPrice,
-          market_value: remainingQuantity * numericCurrentPrice,
+          current_price_base: priceBase,
+          currency: holdingCurrency,
+          market_value: remainingQuantity * priceBase,
+          market_value_local: remainingQuantity * numericCurrentPrice,
+          market_value_base: remainingQuantity * priceBase,
+          fx_rate_to_base: localToBaseRate,
+          fx_fetched_at: fxRate.fetchedAt,
           weight: 0,
           updated_at: new Date().toISOString(),
         })
@@ -173,14 +220,19 @@ export async function POST(
       }
     }
   } else {
-    newCashBalance = currentCash - marketValue
+    newCashBalance = currentCash - marketValueBase
 
     if ((existingHoldings || []).length > 0) {
       const primaryHolding = existingHoldings?.[0]
       const newQuantity = existingQuantity + numericQuantity
-      const tradeCost = numericQuantity * (numericAverageCost || numericCurrentPrice)
+      const tradeCost = numericQuantity * averageCostLocal
+      const tradeCostBase = numericQuantity * averageCostBase
       const newAverageCost =
         newQuantity > 0 ? (existingCostBasis + tradeCost) / newQuantity : 0
+      const newAverageCostBase =
+        newQuantity > 0
+          ? (existingCostBasisBase + tradeCostBase) / newQuantity
+          : 0
 
       const { data, error } = await supabase
         .from("agent_holdings")
@@ -189,8 +241,15 @@ export async function POST(
           asset_type: asset_type || primaryHolding?.asset_type || "stock",
           quantity: newQuantity,
           average_cost: newAverageCost,
+          average_cost_base: newAverageCostBase,
           current_price: numericCurrentPrice,
-          market_value: newQuantity * numericCurrentPrice,
+          current_price_base: priceBase,
+          currency: holdingCurrency,
+          market_value: newQuantity * priceBase,
+          market_value_local: newQuantity * numericCurrentPrice,
+          market_value_base: newQuantity * priceBase,
+          fx_rate_to_base: localToBaseRate,
+          fx_fetched_at: fxRate.fetchedAt,
           weight: 0,
           updated_at: new Date().toISOString(),
         })
@@ -217,9 +276,16 @@ export async function POST(
           asset_name,
           asset_type: asset_type || "stock",
           quantity: numericQuantity,
-          average_cost: numericAverageCost || numericCurrentPrice,
+          currency: holdingCurrency,
+          average_cost: averageCostLocal,
+          average_cost_base: averageCostBase,
           current_price: numericCurrentPrice,
-          market_value: marketValue,
+          current_price_base: priceBase,
+          market_value: marketValueBase,
+          market_value_local: marketValueLocal,
+          market_value_base: marketValueBase,
+          fx_rate_to_base: localToBaseRate,
+          fx_fetched_at: fxRate.fetchedAt,
           weight: 0,
         })
         .select()
@@ -250,7 +316,7 @@ export async function POST(
   }
 
   const holdingsValue = (allHoldings || []).reduce((sum, holding) => {
-    return sum + Number(holding.market_value || 0)
+    return sum + Number(holding.market_value_base || holding.market_value || 0)
   }, 0)
 
   const totalValue = newCashBalance + holdingsValue
@@ -258,7 +324,9 @@ export async function POST(
   const weightedHoldings = (allHoldings || []).map((holding) => {
     const holdingWeight =
       totalValue > 0
-        ? (Number(holding.market_value || 0) / totalValue) * 100
+        ? (Number(holding.market_value_base || holding.market_value || 0) /
+            totalValue) *
+          100
         : 0
 
     return {
@@ -273,6 +341,10 @@ export async function POST(
       .from("agent_holdings")
       .update({
         weight: holding.weight,
+        market_value_base: Number(
+          holding.market_value_base || holding.market_value || 0
+        ),
+        market_value: Number(holding.market_value_base || holding.market_value || 0),
         updated_at: holding.updated_at,
       })
       .eq("id", holding.id)
@@ -283,6 +355,7 @@ export async function POST(
     .update({
       cash_balance: newCashBalance,
       current_value: totalValue,
+      base_currency: baseCurrency,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)
@@ -299,6 +372,7 @@ export async function POST(
     total_value: totalValue,
     cash_value: newCashBalance,
     holdings_value: holdingsValue,
+    base_currency: baseCurrency,
     daily_return: 0,
     cumulative_return:
       Number(agent.initial_capital) > 0

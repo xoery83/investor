@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { getCachedPrice } from "../market/get-cached-price"
+import {
+  getCachedFxRate,
+  normalizeCurrency,
+} from "../market/get-cached-fx-rate"
 import type { Agent, AgentHolding, AgentValuation } from "../types/agent"
 
 type CalculateValuationInput = {
@@ -32,11 +36,12 @@ export async function calculateAndStoreValuation({
 }: CalculateValuationInput): Promise<ValuationSnapshot> {
   const refreshedHoldings = await refreshHoldingPrices(
     supabase,
-    holdings
+    holdings,
+    normalizeCurrency(agent.base_currency)
   )
   const cashBalance = Number(agent.cash_balance || 0)
   const holdingsValue = refreshedHoldings.reduce(
-    (sum, holding) => sum + Number(holding.market_value || 0),
+    (sum, holding) => sum + baseMarketValue(holding),
     0
   )
   const totalValue = cashBalance + holdingsValue
@@ -45,7 +50,7 @@ export async function calculateAndStoreValuation({
   const weightedHoldings = refreshedHoldings.map((holding) => ({
     ...holding,
     weight: totalValue > 0
-      ? (Number(holding.market_value || 0) / totalValue) * 100
+      ? (baseMarketValue(holding) / totalValue) * 100
       : 0,
   }))
 
@@ -54,7 +59,13 @@ export async function calculateAndStoreValuation({
       .from("agent_holdings")
       .update({
         current_price: holding.current_price,
+        currency: holding.currency,
+        current_price_base: holding.current_price_base,
         market_value: holding.market_value,
+        market_value_local: holding.market_value_local,
+        market_value_base: holding.market_value_base,
+        fx_rate_to_base: holding.fx_rate_to_base,
+        fx_fetched_at: holding.fx_fetched_at,
         weight: holding.weight,
         updated_at: now.toISOString(),
       })
@@ -87,6 +98,7 @@ export async function calculateAndStoreValuation({
     .update({
       current_value: totalValue,
       cash_balance: cashBalance,
+      base_currency: normalizeCurrency(agent.base_currency),
       updated_at: now.toISOString(),
     })
     .eq("id", agent.id)
@@ -102,6 +114,7 @@ export async function calculateAndStoreValuation({
       total_value: totalValue,
       cash_value: cashBalance,
       holdings_value: holdingsValue,
+      base_currency: normalizeCurrency(agent.base_currency),
       daily_return: dailyReturn,
       cumulative_return: cumulativeReturn,
       annualized_return: annualizedReturn,
@@ -127,18 +140,26 @@ export async function calculateAndStoreValuation({
 
 async function refreshHoldingPrices(
   supabase: SupabaseClient,
-  holdings: AgentHolding[]
+  holdings: AgentHolding[],
+  baseCurrency: string
 ): Promise<UpdatedHolding[]> {
   return Promise.all(
     holdings.map(async (holding) => {
       if (isCashHolding(holding)) {
         const quantity = Number(holding.quantity || 0)
         const price = Number(holding.current_price || 1) || 1
+        const marketValue = quantity * price
 
         return {
           ...holding,
+          currency: baseCurrency,
           current_price: price,
-          market_value: quantity * price,
+          current_price_base: price,
+          market_value: marketValue,
+          market_value_local: marketValue,
+          market_value_base: marketValue,
+          fx_rate_to_base: 1,
+          fx_fetched_at: new Date().toISOString(),
           price_source: "cash",
           market_state: "CASH",
         }
@@ -147,20 +168,39 @@ async function refreshHoldingPrices(
       try {
         const quote = await getCachedPrice(supabase, holding.symbol)
         const price = quote.price || Number(holding.current_price || 0)
+        const currency = normalizeCurrency(quote.currency || holding.currency)
+        const fxRate = await getCachedFxRate(supabase, currency, baseCurrency)
+        const marketValueLocal = Number(holding.quantity || 0) * price
+        const marketValueBase = marketValueLocal * fxRate.rate
 
         return {
           ...holding,
           asset_name: holding.asset_name || quote.name,
+          currency,
           current_price: price,
-          market_value: Number(holding.quantity || 0) * price,
+          current_price_base: price * fxRate.rate,
+          market_value: marketValueBase,
+          market_value_local: marketValueLocal,
+          market_value_base: marketValueBase,
+          fx_rate_to_base: fxRate.rate,
+          fx_fetched_at: fxRate.fetchedAt,
           price_source: quote.priceSource,
           market_state: quote.marketState,
         }
       } catch (error) {
+        const currency = normalizeCurrency(holding.currency || baseCurrency)
+        const fxRate = Number(holding.fx_rate_to_base || 1)
+        const price = Number(holding.current_price || 0)
+        const marketValueLocal = Number(holding.quantity || 0) * price
+        const marketValueBase = marketValueLocal * fxRate
+
         return {
           ...holding,
-          market_value:
-            Number(holding.quantity || 0) * Number(holding.current_price || 0),
+          currency,
+          current_price_base: price * fxRate,
+          market_value: marketValueBase,
+          market_value_local: marketValueLocal,
+          market_value_base: marketValueBase,
           price_source: "manual",
           market_state: "STALE",
           quote_error:
@@ -171,6 +211,10 @@ async function refreshHoldingPrices(
       }
     })
   )
+}
+
+function baseMarketValue(holding: AgentHolding) {
+  return Number(holding.market_value_base || holding.market_value || 0)
 }
 
 function isCashHolding(holding: AgentHolding) {

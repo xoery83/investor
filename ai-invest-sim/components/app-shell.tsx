@@ -1,13 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import type { User } from "@supabase/supabase-js"
 import {
   Bot,
   BriefcaseBusiness,
-  ChartCandlestick,
   FlaskConical,
   LayoutDashboard,
   PanelLeftClose,
@@ -117,15 +117,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 collapsed ? "justify-center" : "gap-3"
               )}
             >
-              <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary/90 to-primary/60 shadow-lg shadow-primary/20 ring-1 ring-white/10">
-                <ChartCandlestick className="size-4.5 text-primary-foreground" />
-              </div>
+              <Image
+                src="/brand/logoimage.png"
+                alt="Quantara"
+                width={40}
+                height={40}
+                className="size-10 rounded-xl object-contain"
+                priority
+              />
               {!collapsed && (
-                <div>
-                  <p className="text-sm font-semibold tracking-tight">
-                    {t("app.name")}
-                  </p>
-                  <p className="font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+                <div className="min-w-0">
+                  <Image
+                    src={
+                      locale === "zh"
+                        ? "/brand/logofontchinese.png"
+                        : "/brand/logofont.png"
+                    }
+                    alt={t("app.name")}
+                    width={154}
+                    height={28}
+                    className="h-auto max-h-7 w-[154px] object-contain object-left"
+                    priority
+                  />
+                  <p className="whitespace-nowrap font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
                     {t("app.subtitle")}
                   </p>
                 </div>

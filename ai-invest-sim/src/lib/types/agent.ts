@@ -7,6 +7,7 @@ export type RebalanceFrequency =
 
 export type AgentRunType =
   | "rebalance"
+  | "initial_build"
   | "daily"
   | "weekly"
   | "escalation"
@@ -35,6 +36,8 @@ export type Agent = {
   current_value: number
 
   cash_balance: number
+
+  base_currency?: string
 
   is_active: boolean
 
@@ -70,6 +73,20 @@ export type AgentHolding = {
 
   market_value: number
 
+  currency?: string
+
+  average_cost_base?: number
+
+  current_price_base?: number
+
+  market_value_local?: number
+
+  market_value_base?: number
+
+  fx_rate_to_base?: number
+
+  fx_fetched_at?: string | null
+
   weight: number
 
   updated_at?: string
@@ -103,6 +120,8 @@ export type AgentValuation = {
   cash_value: number
 
   holdings_value: number
+
+  base_currency?: string
 
   daily_return: number
 

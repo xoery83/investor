@@ -84,6 +84,7 @@ export function validateTradeProposal({
   riskPolicy,
   profile,
   universe,
+  validationMode = "rebalance",
 }: {
   agent: Agent
   proposal: unknown
@@ -91,6 +92,7 @@ export function validateTradeProposal({
   riskPolicy: RiskPolicy
   profile?: AgentProfile
   universe?: AgentInvestmentUniverse | null
+  validationMode?: "rebalance" | "initial_build"
 }): LocalValidationResult {
   const record = isRecord(proposal) ? proposal : {}
   const manualRequired = record.manual_required === true
@@ -231,6 +233,7 @@ export function validateTradeProposal({
   )
 
   if (
+    validationMode !== "initial_build" &&
     weeklyTurnover > Number(riskPolicy.max_weekly_turnover_pct) &&
     suggestedActions.length > 0
   ) {
@@ -245,7 +248,10 @@ export function validateTradeProposal({
         Number(action.target_weight ?? 0) - Number(action.current_weight ?? 0)
     )
 
-    if (oneTradeSize > Number(riskPolicy.max_one_trade_pct)) {
+    if (
+      validationMode !== "initial_build" &&
+      oneTradeSize > Number(riskPolicy.max_one_trade_pct)
+    ) {
       violations.push(
         `${action.symbol.toUpperCase()} trade size ${roundWeight(oneTradeSize)}% exceeds one-trade limit ${riskPolicy.max_one_trade_pct}%.`
       )
@@ -273,6 +279,7 @@ export function validateTradeProposal({
       current_cash_weight: currentCashWeight,
       residual_policy_gaps: residualPolicyGaps,
       rule_summary: {
+        validation_mode: validationMode === "initial_build" ? 1 : 0,
         min_cash_pct: Number(riskPolicy.min_cash_pct),
         max_cash_pct: Number(riskPolicy.max_cash_pct),
         max_single_stock_pct: Number(riskPolicy.max_single_stock_pct),

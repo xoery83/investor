@@ -18,6 +18,7 @@ type AgentForm = {
   proposal_execution_required: boolean
   rebalance_frequency: string
   model_name: string
+  base_currency: string
 }
 
 type ProfileForm = {
@@ -90,6 +91,7 @@ const defaultAgentForm: AgentForm = {
   proposal_execution_required: false,
   rebalance_frequency: "daily",
   model_name: "gpt-4.1-mini",
+  base_currency: "USD",
 }
 
 const defaultProfileForm: ProfileForm = {
@@ -199,6 +201,7 @@ export default function AgentSettingsPage() {
         proposal_execution_required: Boolean(agent.proposal_execution_required),
         rebalance_frequency: String(agent.rebalance_frequency || "daily"),
         model_name: String(agent.model_name || "gpt-4.1-mini"),
+        base_currency: String(agent.base_currency || "USD"),
       })
 
       setProfileForm({
@@ -444,14 +447,14 @@ export default function AgentSettingsPage() {
 
           <div className="mb-8">
             <h1 className="text-3xl font-bold">Agent Settings</h1>
-            <p className="mt-2 text-slate-400">
+            <p className="mt-2 text-slate-500">
               This agent can be viewed, but only the owner or an admin can edit its configuration.
             </p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 uppercase tracking-wide text-slate-300">
+              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 uppercase tracking-wide text-slate-700">
                 Role: {userRole}
               </span>
-              <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-400">
+              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-slate-500">
                 Limited access
               </span>
             </div>
@@ -620,14 +623,14 @@ export default function AgentSettingsPage() {
 
         <div className="mb-8">
           <h1 className="text-3xl font-bold">Agent Settings</h1>
-          <p className="mt-2 text-slate-400">
+          <p className="mt-2 text-slate-500">
             Modify agent identity, investment profile, risk policy, and workflow configuration.
           </p>
           <div className="mt-4 flex flex-wrap gap-2 text-xs">
-            <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 uppercase tracking-wide text-slate-300">
+            <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 uppercase tracking-wide text-slate-700">
               Role: {userRole}
             </span>
-            <span className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-400">
+            <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-slate-500">
               {isAdmin ? "Admin access" : isOwner ? "Owner access" : "Limited access"}
             </span>
           </div>
@@ -649,7 +652,7 @@ export default function AgentSettingsPage() {
                 hint="Example: Expand this agent to include Hong Kong-listed China tech ETFs and US-listed China ADRs, but avoid broad US index ETFs."
               />
               {draftNotice && (
-                <div className="rounded-lg border border-blue-800 bg-blue-950 p-3 text-sm text-blue-200">
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
                   {draftNotice}
                 </div>
               )}
@@ -657,7 +660,7 @@ export default function AgentSettingsPage() {
                 type="button"
                 onClick={handleNaturalUpdate}
                 disabled={drafting || !naturalUpdate.trim()}
-                className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-5 py-2 text-blue-200 hover:bg-blue-500/20 disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+                className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-5 py-2 text-blue-700 hover:bg-blue-500/20 disabled:border-blue-200 disabled:bg-blue-100 disabled:text-slate-400"
               >
                 {drafting ? "Generating field updates..." : "Apply Draft to Fields"}
               </button>
@@ -712,6 +715,24 @@ export default function AgentSettingsPage() {
                 label="Model Name"
                 value={agentForm.model_name}
                 onChange={(value) => updateAgent("model_name", value)}
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <SelectField
+                label="Base Currency"
+                value={agentForm.base_currency}
+                onChange={(value) => updateAgent("base_currency", value)}
+                options={[
+                  ["USD", "USD"],
+                  ["HKD", "HKD"],
+                  ["AUD", "AUD"],
+                  ["NZD", "NZD"],
+                  ["CNY", "CNY"],
+                  ["EUR", "EUR"],
+                  ["GBP", "GBP"],
+                  ["JPY", "JPY"],
+                ]}
+                hint="All portfolio totals, cash, weights, and valuation snapshots use this currency. It can only be changed before holdings exist."
               />
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -949,22 +970,22 @@ export default function AgentSettingsPage() {
           </SettingsSection>
 
           {error && (
-            <div className="rounded-lg border border-red-800 bg-red-950 p-3 text-red-300">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700">
               {error}
             </div>
           )}
 
-          <div className="sticky bottom-0 flex justify-end gap-3 border-t border-slate-800 bg-slate-950/95 py-4 backdrop-blur">
+          <div className="sticky bottom-0 flex justify-end gap-3 border-t border-blue-200 bg-white/95 py-4 backdrop-blur">
             <Link
               href={`/agents/${id}`}
-              className="rounded-lg border border-slate-700 px-5 py-2 text-slate-300 hover:bg-slate-900"
+              className="rounded-lg border border-blue-200 px-5 py-2 text-slate-700 hover:bg-blue-50"
             >
               Cancel
             </Link>
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-blue-600 px-5 py-2 text-white hover:bg-blue-700 disabled:bg-slate-700"
+              className="rounded-lg bg-blue-600 px-5 py-2 text-white hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-500"
             >
               {saving ? "Saving..." : "Save Changes"}
             </button>
@@ -1179,7 +1200,7 @@ function SettingsSection({
   children: ReactNode
 }) {
   return (
-    <section className="rounded-xl border border-slate-800 p-6">
+    <section className="rounded-xl border border-blue-200 bg-white/65 p-6 shadow-sm shadow-blue-100/50">
       <div className="mb-5">
         <h2 className="text-xl font-semibold">{title}</h2>
         <p className="mt-1 text-sm text-slate-500">{description}</p>
@@ -1196,7 +1217,7 @@ function PublicationReadinessPanel({
 }) {
   if (!readiness) {
     return (
-      <section className="rounded-xl border border-slate-800 p-6">
+      <section className="rounded-xl border border-blue-200 p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold">Publication Readiness</h2>
@@ -1204,7 +1225,7 @@ function PublicationReadinessPanel({
               Readiness is checked before an agent can become public or accept followers.
             </p>
           </div>
-          <span className="rounded-md border border-slate-700 px-3 py-1 text-sm text-slate-400">
+          <span className="rounded-md border border-blue-200 px-3 py-1 text-sm text-slate-500">
             Loading
           </span>
         </div>
@@ -1216,22 +1237,22 @@ function PublicationReadinessPanel({
     <section
       className={
         readiness.ready
-          ? "rounded-xl border border-emerald-900 bg-emerald-950/20 p-6"
-          : "rounded-xl border border-amber-900 bg-amber-950/20 p-6"
+          ? "rounded-xl border border-emerald-200 bg-emerald-50 p-6"
+          : "rounded-xl border border-amber-200 bg-amber-50 p-6"
       }
     >
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">Publication Readiness</h2>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-slate-500">
             Public agents must pass these checks before users can follow or buy simulated Agent ETF positions.
           </p>
         </div>
         <span
           className={
             readiness.ready
-              ? "rounded-md border border-emerald-700 bg-emerald-950 px-3 py-1 text-sm text-emerald-300"
-              : "rounded-md border border-amber-700 bg-amber-950 px-3 py-1 text-sm text-amber-300"
+              ? "rounded-md border border-emerald-200 bg-emerald-100 px-3 py-1 text-sm text-emerald-700"
+              : "rounded-md border border-amber-200 bg-amber-100 px-3 py-1 text-sm text-amber-700"
           }
         >
           {readiness.ready ? "Ready to publish" : "Blocked"}
@@ -1239,7 +1260,7 @@ function PublicationReadinessPanel({
       </div>
 
       {!readiness.ready && (
-        <div className="mb-4 rounded-lg border border-amber-900 bg-slate-950/50 p-3 text-sm text-amber-100">
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           {readiness.blockers[0] || "Publication is blocked by risk policy."}
         </div>
       )}
@@ -1248,22 +1269,22 @@ function PublicationReadinessPanel({
         {readiness.checks.map((check) => (
           <div
             key={check.key}
-            className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"
+            className="rounded-lg border border-blue-200 bg-white/70 p-3"
           >
             <div className="flex items-center justify-between gap-3">
-              <p className="font-medium text-slate-200">{check.label}</p>
+              <p className="font-medium text-slate-800">{check.label}</p>
               <span
                 className={
                   check.passed
-                    ? "text-sm text-emerald-300"
-                    : "text-sm text-amber-300"
+                    ? "text-sm text-emerald-700"
+                    : "text-sm text-amber-700"
                 }
               >
                 {check.passed ? "Pass" : "Blocked"}
               </span>
             </div>
             {!check.passed && (
-              <p className="mt-2 text-sm text-slate-400">{check.message}</p>
+              <p className="mt-2 text-sm text-slate-500">{check.message}</p>
             )}
           </div>
         ))}
@@ -1289,9 +1310,9 @@ function TextField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm text-slate-400">{label}</span>
+      <span className="mb-2 block text-sm text-slate-500">{label}</span>
       <input
-        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2"
+        className="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-2"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
@@ -1306,7 +1327,7 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="mb-2 text-sm text-slate-500">{label}</p>
-      <div className="min-h-10 whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-2 text-slate-200">
+      <div className="min-h-10 whitespace-pre-wrap rounded-lg border border-blue-200 bg-white/70 px-4 py-2 text-slate-800">
         {value}
       </div>
     </div>
@@ -1324,11 +1345,11 @@ function NumberField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm text-slate-400">{label}</span>
+      <span className="mb-2 block text-sm text-slate-500">{label}</span>
       <input
         type="number"
         step="0.01"
-        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2"
+        className="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-2"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -1351,10 +1372,10 @@ function TextAreaField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm text-slate-400">{label}</span>
+      <span className="mb-2 block text-sm text-slate-500">{label}</span>
       <textarea
         rows={rows}
-        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2"
+        className="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-2"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -1380,9 +1401,9 @@ function SelectField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm text-slate-400">{label}</span>
+      <span className="mb-2 block text-sm text-slate-500">{label}</span>
       <select
-        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2"
+        className="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-2"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
@@ -1414,7 +1435,7 @@ function ToggleRow({
   uncheckedLabel: string
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-800 p-4">
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-blue-200 p-4">
       <div>
         <p className="font-medium">{label}</p>
         <p className="text-sm text-slate-500">{description}</p>
@@ -1424,8 +1445,8 @@ function ToggleRow({
         onClick={() => onChange(!checked)}
         className={
           checked
-            ? "rounded-lg bg-green-900 px-4 py-2 text-green-300"
-            : "rounded-lg bg-slate-800 px-4 py-2 text-slate-400"
+            ? "rounded-lg bg-emerald-100 px-4 py-2 text-emerald-700"
+            : "rounded-lg bg-blue-100 px-4 py-2 text-slate-500"
         }
       >
         {checked ? checkedLabel : uncheckedLabel}
@@ -1448,7 +1469,7 @@ function WorkflowToggle({
   onTemplateChange: (value: string) => void
 }) {
   return (
-    <div className="rounded-lg border border-slate-800 p-4">
+    <div className="rounded-lg border border-blue-200 p-4">
       <ToggleRow
         label={label}
         description="Controls whether this module is available to run."

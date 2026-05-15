@@ -86,7 +86,7 @@ export async function POST(
     await hydrateQuoteCache((holdings || []) as AgentHolding[])
 
     const holdingsValue = (holdings || []).reduce((sum, holding) => {
-      return sum + Number(holding.market_value || 0)
+      return sum + Number(holding.market_value_base || holding.market_value || 0)
     }, 0)
     const cashBalance = Number((agent as Agent).cash_balance || 0)
     const totalValue = cashBalance + holdingsValue

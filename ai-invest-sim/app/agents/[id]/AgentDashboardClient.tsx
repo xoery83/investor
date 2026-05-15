@@ -9,6 +9,7 @@ import FollowAgentButton from "./FollowAgentButton"
 import type { TradeDraft } from "./AgentPortfolioPanel"
 import RunAgentButton from "./RunAgentButton"
 import type { UpdatedHolding } from "../../../src/lib/agents/calculate-valuation"
+import { supabase } from "../../../src/lib/supabase"
 import type {
   Agent,
   AgentHolding,
@@ -69,6 +70,12 @@ export default function AgentDashboardClient({
       market_state: "LOADED",
     }))
   )
+  const [currentRuns, setCurrentRuns] = React.useState(runs)
+  const [currentTradeProposals, setCurrentTradeProposals] =
+    React.useState(tradeProposals)
+  const [appliedProposalIds, setAppliedProposalIds] = React.useState<Set<string>>(
+    () => new Set()
+  )
   const [tradeDraft, setTradeDraft] = React.useState<TradeDraft | null>(null)
   const [configTab, setConfigTab] = React.useState<
     "profile" | "workflow" | null
@@ -88,13 +95,15 @@ export default function AgentDashboardClient({
     summary.total_value > 0
       ? (summary.cash_balance / summary.total_value) * 100
       : 0
+  const initialBuildMode =
+    currentHoldings.length === 0 || Number(summary.holdings_value || 0) <= 1
   const sortedTradeProposals = React.useMemo(
     () =>
-      [...tradeProposals].sort(
+      [...currentTradeProposals].sort(
         (a, b) =>
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       ),
-    [tradeProposals]
+    [currentTradeProposals]
   )
 
   function handleFollowChange(nextFollowing: boolean) {
@@ -113,6 +122,38 @@ export default function AgentDashboardClient({
         block: "start",
       })
     }, 0)
+  }
+
+  function handleInitialBuildApplied(
+    proposalId: string,
+    payload: PortfolioSummary & { holdings: UpdatedHolding[] }
+  ) {
+    setCurrentHoldings(payload.holdings)
+    setSummary({
+      cash_balance: payload.cash_balance,
+      holdings_value: payload.holdings_value,
+      total_value: payload.total_value,
+    })
+    setAppliedProposalIds((previous) => new Set(previous).add(proposalId))
+    clearAgentDetailCache(agent.id)
+  }
+
+  function handleRunCompleted(payload: {
+    run?: unknown
+    trade_proposal?: unknown
+  }) {
+    if (payload.run) {
+      setCurrentRuns((previous) => [payload.run as AgentRun, ...previous])
+    }
+
+    if (payload.trade_proposal) {
+      setCurrentTradeProposals((previous) => [
+        payload.trade_proposal as TradeProposalWithValidation,
+        ...previous,
+      ])
+    }
+
+    clearAgentDetailCache(agent.id)
   }
 
   function loadHoldingIntoTradeForm(holding: UpdatedHolding) {
@@ -135,37 +176,31 @@ export default function AgentDashboardClient({
           </Link>
         </div>
 
-        <div className="flex items-start justify-between mb-8">
-          <div>
+        <div className="mb-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+          <div className="min-w-0">
             <h1 className="text-3xl font-bold">{agent.name}</h1>
-            <p className="text-slate-400 mt-2">
+            <p className="mt-2 max-w-4xl text-slate-500">
               {agent.description || "No description"}
             </p>
-            <div className="mt-4 flex flex-wrap gap-3 text-sm">
+            <p className="mt-3 text-sm text-slate-600">
+              by{" "}
+              <span className="font-medium text-slate-800">
+                {agent.creator_display_name || "Unknown user"}
+              </span>
+              , From {formatShortDate(agent.created_at)} with initial value{" "}
+              <span className="font-medium text-slate-800">
+                {formatCurrency(initialMarketValue)}
+              </span>
+              .
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3 text-sm">
               <StatusPill value={agent.visibility} />
               <StatusPill value={agent.lifecycle_status} />
-              <StatusPill value={agent.creator_role || agent.creator_type} />
-              {displayFollowing && <StatusPill value="following" />}
-              <MetaPill
-                label="Created"
-                value={formatDateTime(agent.created_at)}
-              />
-              <MetaPill
-                label="Initial Market Value"
-                value={formatCurrency(initialMarketValue)}
-              />
-              <MetaPill
-                label="Creator"
-                value={agent.creator_display_name || "Unknown user"}
-              />
-              <MetaPill
-                label="Followers"
-                value={String(followerCount)}
-              />
+              <StatusPill value={`Followers ${followerCount}`} />
             </div>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-wrap justify-start gap-2 xl:max-w-[620px] xl:justify-end">
             <FollowAgentButton
               key={`${agent.id}-${isFollowing ? "following" : "not-following"}`}
               agentId={agent.id}
@@ -173,7 +208,13 @@ export default function AgentDashboardClient({
               initialFollowing={displayFollowing}
               onFollowChange={handleFollowChange}
             />
-            {permissions.canRun && <RunAgentButton agentId={agent.id} />}
+            {permissions.canRun && (
+              <RunAgentButton
+                agentId={agent.id}
+                initialBuildMode={initialBuildMode}
+                onRunCompleted={handleRunCompleted}
+              />
+            )}
 
             {permissions.canEdit && (
               <Link
@@ -354,7 +395,15 @@ export default function AgentDashboardClient({
                 <div key={proposal.id} className="min-w-full snap-start">
                   <TradeProposalCard
                     proposal={proposal}
+                    agentId={agent.id}
+                    totalValue={summary.total_value}
+                    holdings={currentHoldings}
+                    canApplyInitialBuild={permissions.canTrade}
+                    applied={appliedProposalIds.has(proposal.id)}
                     onUseAction={loadTradeDraft}
+                    onInitialBuildApplied={(payload) =>
+                      handleInitialBuildApplied(proposal.id, payload)
+                    }
                   />
                 </div>
               ))}
@@ -370,11 +419,11 @@ export default function AgentDashboardClient({
             </p>
           </div>
 
-          {runs.length === 0 ? (
+          {currentRuns.length === 0 ? (
             <p className="text-slate-500">No agent runs yet.</p>
           ) : (
             <div className="grid gap-4 lg:grid-cols-2">
-              {runs.map((run) => (
+              {currentRuns.map((run) => (
                 <RunResearchCard key={run.id} run={run} />
               ))}
             </div>
@@ -510,11 +559,11 @@ function RunResearchCard({ run }: { run: AgentRun }) {
       )}
 
       {runType === "escalation" && (
-        <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-          <p className="mb-2 text-xs uppercase tracking-wide text-red-200">
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="mb-2 text-xs uppercase tracking-wide text-red-700">
             Escalation
           </p>
-          <div className="space-y-1 text-sm text-red-100">
+          <div className="space-y-1 text-sm text-red-700">
             <p>Severity: {readString(escalation.severity, "Not specified")}</p>
             <p>
               Time sensitivity:{" "}
@@ -569,7 +618,7 @@ function ResearchListBlock({
       <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">
         {title}
       </p>
-      <ul className="space-y-1 text-sm text-slate-300">
+      <ul className="space-y-1 text-sm text-slate-600">
         {items.map((item) => (
           <li key={item}>- {item}</li>
         ))}
@@ -591,11 +640,27 @@ function ResearchMiniBlock({ label, value }: { label: string; value: string }) {
 
 function TradeProposalCard({
   proposal,
+  agentId,
+  totalValue,
+  holdings,
+  canApplyInitialBuild,
+  applied,
   onUseAction,
+  onInitialBuildApplied,
 }: {
   proposal: TradeProposalWithValidation
+  agentId: string
+  totalValue: number
+  holdings: UpdatedHolding[]
+  canApplyInitialBuild?: boolean
+  applied?: boolean
   onUseAction?: (draft: Omit<TradeDraft, "key">) => void
+  onInitialBuildApplied?: (
+    payload: PortfolioSummary & { holdings: UpdatedHolding[] }
+  ) => void
 }) {
+  const [buildLoading, setBuildLoading] = React.useState(false)
+  const [buildError, setBuildError] = React.useState("")
   const proposalBody = isRecord(proposal.proposal) ? proposal.proposal : {}
   const validation = proposal.validator_results?.[0]
   const violations = Array.isArray(validation?.violations)
@@ -607,6 +672,21 @@ function TradeProposalCard({
     : []
   const actions = readActions(proposalBody.suggested_actions)
   const allocations = readAllocations(proposalBody.target_allocation)
+  const isInitialBuildProposal = proposalBody.proposal_type === "initial_build"
+  const initialBuildBuyActions = actions.filter(
+    (action) => action.action === "buy" && action.symbol.toUpperCase() !== "CASH"
+  )
+  const existingSymbols = new Set(
+    holdings
+      .filter((holding) => Number(holding.quantity || 0) > 0)
+      .map((holding) => holding.symbol.toUpperCase())
+  )
+  const initialBuildAlreadyApplied =
+    Boolean(applied) ||
+    (initialBuildBuyActions.length > 0 &&
+      initialBuildBuyActions.every((action) =>
+        existingSymbols.has(action.symbol.toUpperCase())
+      ))
   const stagedPlan = readStagedPlan(proposalBody.staged_remediation_plan)
   const manualActions = readStringList(proposalBody.manual_actions)
   const validatorStatus =
@@ -640,6 +720,46 @@ function TradeProposalCard({
           {statusLabel}
         </span>
       </div>
+
+      {isInitialBuildProposal &&
+        approved &&
+        canApplyInitialBuild &&
+        initialBuildBuyActions.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+            <button
+              type="button"
+              onClick={() =>
+                applyInitialBuildProposal({
+                  agentId,
+                  totalValue,
+                  actions: initialBuildBuyActions,
+                  onComplete: onInitialBuildApplied,
+                  setLoading: setBuildLoading,
+                  setError: setBuildError,
+                })
+              }
+              disabled={buildLoading || initialBuildAlreadyApplied}
+              className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-emerald-300"
+            >
+              {buildLoading
+                ? "Building..."
+                : initialBuildAlreadyApplied
+                  ? "Portfolio built"
+                  : "Build portfolio"}
+            </button>
+            <p className="text-sm text-emerald-800">
+              {initialBuildAlreadyApplied
+                ? "This initial build has already been applied to current holdings."
+                : "Execute all initial BUY actions using current market quotes."}
+            </p>
+          </div>
+        )}
+
+      {buildError && (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {buildError}
+        </p>
+      )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
@@ -792,6 +912,135 @@ function TradeProposalCard({
   )
 }
 
+type ProposalAction = ReturnType<typeof readActions>[number]
+
+async function applyInitialBuildProposal({
+  agentId,
+  totalValue,
+  actions,
+  onComplete,
+  setLoading,
+  setError,
+}: {
+  agentId: string
+  totalValue: number
+  actions: ProposalAction[]
+  onComplete?: (payload: PortfolioSummary & { holdings: UpdatedHolding[] }) => void
+  setLoading: (loading: boolean) => void
+  setError: (error: string) => void
+}) {
+  setLoading(true)
+  setError("")
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      throw new Error("Please log in before building the portfolio.")
+    }
+
+    let latestPayload: (PortfolioSummary & { holdings: UpdatedHolding[] }) | null =
+      null
+
+    for (const action of actions) {
+      const quoteData = await lookupQuote(action.symbol)
+      if (!quoteData?.success) {
+        throw new Error(
+          quoteData?.error || `Failed to fetch quote for ${action.symbol}.`
+        )
+      }
+
+      const quote = quoteData.quote || {}
+      const price = Number(quote.price || 0)
+      if (price <= 0) {
+        throw new Error(`No usable market price for ${action.symbol}.`)
+      }
+
+      const tradePct = Math.abs(
+        Number(action.estimated_portfolio_pct_change || 0) ||
+          Number(action.target_weight || 0) - Number(action.current_weight || 0)
+      )
+      const tradeAmount = totalValue > 0 ? (tradePct / 100) * totalValue : 0
+
+      if (tradeAmount <= 0) continue
+
+      const res = await fetch(`/api/agents/${agentId}/holdings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: "buy",
+          symbol: action.symbol,
+          asset_name: quote.name || action.symbol,
+          asset_type: inferAssetType(String(quote.assetType || ""), action.asset_type),
+          quantity: 0,
+          target_market_value_base: tradeAmount,
+          average_cost: price,
+          current_price: price,
+          currency: quote.currency || "USD",
+        }),
+      })
+
+      const data = await res.json()
+      if (!data.success) {
+        throw new Error(data.error || `Failed to buy ${action.symbol}.`)
+      }
+
+      latestPayload = {
+        holdings: data.holdings || [],
+        cash_balance: Number(data.cash_balance || 0),
+        holdings_value: Number(data.holdings_value || 0),
+        total_value: Number(data.total_value || 0),
+      }
+    }
+
+    if (latestPayload) {
+      onComplete?.(latestPayload)
+      clearAgentDetailCache(agentId)
+    }
+  } catch (error) {
+    setError(
+      error instanceof Error
+        ? error.message
+        : "Failed to apply initial build."
+    )
+  } finally {
+    setLoading(false)
+  }
+}
+
+async function lookupQuote(symbol: string) {
+  const res = await fetch(
+    `/api/market/quote?symbol=${encodeURIComponent(symbol.trim())}`
+  )
+
+  return res.json()
+}
+
+function inferAssetType(quoteAssetType: string, fallback?: string) {
+  const quoteType = quoteAssetType.toLowerCase()
+
+  if (quoteType.includes("etf")) return "etf"
+  if (quoteType.includes("crypto")) return "crypto"
+  if (quoteType.includes("fund")) return "etf"
+  return fallback || "stock"
+}
+
+function clearAgentDetailCache(agentId: string) {
+  try {
+    for (const key of Object.keys(window.sessionStorage)) {
+      if (key.startsWith(`agents:detail:${agentId}:`)) {
+        window.sessionStorage.removeItem(key)
+      }
+    }
+  } catch {
+    // Cache invalidation is best effort only.
+  }
+}
+
 function ConfigRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-1 sm:grid-cols-[150px_1fr]">
@@ -819,8 +1068,8 @@ function ConfigTagGroup({
             key={value}
             className={
               tone === "danger"
-                ? "rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300"
-                : "rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-xs text-blue-200"
+                ? "rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700"
+                : "rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700"
             }
           >
             {value}
@@ -865,28 +1114,18 @@ function SummaryCard({
   )
 }
 
-function MetaPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-blue-100 bg-white/70 px-3 py-2">
-      <p className="font-mono text-[10px] uppercase tracking-wider text-slate-500">
-        {label}
-      </p>
-      <p className="mt-0.5 text-sm text-slate-700">{value}</p>
-    </div>
-  )
-}
-
 function StatusPill({ value }: { value: string }) {
   const normalized = formatSlug(value)
+  const lowerValue = value.toLowerCase()
   const className =
-    value === "active" || value === "public"
-      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-      : value === "system"
-        ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+    lowerValue === "active" || lowerValue === "public"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : lowerValue === "system"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
         : "border-blue-200 bg-white/70 text-slate-700"
 
   return (
-    <span className={`rounded-lg border px-3 py-2 text-sm capitalize ${className}`}>
+    <span className={`min-w-28 rounded-lg border px-4 py-2 text-center text-sm capitalize ${className}`}>
       {normalized}
     </span>
   )
@@ -994,14 +1233,21 @@ function getRunTone(runType: string) {
   if (runType === "weekly") {
     return {
       card: "border-blue-500/30 bg-blue-500/5",
-      badge: "border-blue-500/30 bg-blue-500/10 text-blue-200",
+      badge: "border-blue-200 bg-blue-50 text-blue-700",
+    }
+  }
+
+  if (runType === "initial_build") {
+    return {
+      card: "border-emerald-200 bg-emerald-50/60",
+      badge: "border-emerald-200 bg-emerald-50 text-emerald-700",
     }
   }
 
   if (runType === "escalation") {
     return {
-      card: "border-red-500/30 bg-red-500/5",
-      badge: "border-red-500/30 bg-red-500/10 text-red-200",
+      card: "border-red-200 bg-red-50/70",
+      badge: "border-red-200 bg-red-50 text-red-700",
     }
   }
 
@@ -1015,6 +1261,7 @@ function formatRunType(runType: string) {
   if (runType === "weekly") return "Weekly Deep Research"
   if (runType === "escalation") return "Escalation Memo"
   if (runType === "rebalance") return "Rebalance"
+  if (runType === "initial_build") return "Initial Build"
   return "Daily Routine"
 }
 
@@ -1038,6 +1285,14 @@ function formatDateTime(value: string) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  }).format(new Date(value))
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
   }).format(new Date(value))
 }
 

@@ -1,6 +1,7 @@
 import OpenAI from "openai"
 
 import { buildAgentPrompt } from "./build-agent-prompt"
+import { buildInitialPortfolioPrompt } from "./build-initial-portfolio-prompt"
 
 import {
   Agent,
@@ -33,7 +34,7 @@ type RunAgentInput = {
 }
 
 type ResearchRunInput = RunAgentInput & {
-  runType: Exclude<AgentRunType, "rebalance">
+  runType: Extract<AgentRunType, "daily" | "weekly" | "escalation">
 }
 
 export async function runAgent({
@@ -85,6 +86,50 @@ export async function runAgent({
   return JSON.parse(content)
 }
 
+export async function runInitialBuildAgent({
+  agent,
+  holdings,
+  valuations,
+  recentRuns,
+  profile,
+  riskPolicy,
+  workflowConfig,
+  universe,
+}: RunAgentInput) {
+  const prompt = buildInitialPortfolioPrompt({
+    agent,
+    holdings,
+    valuations,
+    recentRuns,
+    profile,
+    riskPolicy,
+    workflowConfig,
+    universe,
+  })
+
+  const response = await client.chat.completions.create({
+    model: agent.model_name || "gpt-4.1-mini",
+    messages: [
+      {
+        role: "system",
+        content: prompt,
+      },
+    ],
+    temperature: 0.45,
+    response_format: {
+      type: "json_object",
+    },
+  })
+
+  const content = response.choices[0]?.message?.content
+
+  if (!content) {
+    throw new Error("No response from model")
+  }
+
+  return JSON.parse(content)
+}
+
 export async function reviseAgentRecommendation({
   agent,
   recommendation,
@@ -93,6 +138,7 @@ export async function reviseAgentRecommendation({
   profile,
   universe,
   diagnostic,
+  validationMode = "rebalance",
 }: {
   agent: Agent
   recommendation: unknown
@@ -101,7 +147,15 @@ export async function reviseAgentRecommendation({
   profile?: AgentProfile
   universe?: AgentInvestmentUniverse | null
   diagnostic?: PortfolioDiagnostic
+  validationMode?: "rebalance" | "initial_build"
 }) {
+  const turnoverRules =
+    validationMode === "initial_build"
+      ? "- This is initial portfolio construction from cash. Do not enforce max one-trade or weekly turnover limits; do enforce final allocation limits.\n"
+      : `- Any one trade must not exceed ${riskPolicy.max_one_trade_pct}% of portfolio value.
+- Total turnover must not exceed ${riskPolicy.max_weekly_turnover_pct}%.
+`
+
   const response = await client.chat.completions.create({
     model: agent.model_name || "gpt-4.1-mini",
     messages: [
@@ -116,8 +170,7 @@ Hard rules:
 - Cash target must be between ${riskPolicy.min_cash_pct}% and ${riskPolicy.max_cash_pct}%.
 - A single stock target must not exceed ${riskPolicy.max_single_stock_pct}%.
 - ETF target must not exceed ${riskPolicy.max_etf_pct}%.
-- Any one trade must not exceed ${riskPolicy.max_one_trade_pct}% of portfolio value.
-- Total turnover must not exceed ${riskPolicy.max_weekly_turnover_pct}%.
+${turnoverRules.trimEnd()}
 - Target allocation must include CASH and sum to 100%.
 - Do not put CASH in suggested_actions. Cash is only a target allocation item.
 - If the current portfolio cannot become fully compliant in one step, create a staged_remediation_plan and make this recommendation the next compliant step toward policy compliance.
@@ -221,7 +274,7 @@ function buildResearchPrompt({
       ? holdings
           .map(
             (holding) =>
-              `- ${holding.symbol}: ${holding.weight}% weight, quantity ${holding.quantity}, value ${holding.market_value}`
+              `- ${holding.symbol}: ${holding.weight}% weight, quantity ${holding.quantity}, local value ${holding.market_value_local || holding.market_value} ${holding.currency || "USD"}, base value ${holding.market_value_base || holding.market_value}`
           )
           .join("\n")
       : "No holdings. Portfolio is currently cash-heavy."

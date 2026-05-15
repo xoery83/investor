@@ -201,19 +201,12 @@ export async function validateAgentPublicationReadiness({
     )}.`
   )
 
-  const maxSingleWeight = holdings.reduce(
-    (max, holding) => Math.max(max, numberValue(holding.weight)),
-    0
-  )
+  const concentration = getConcentrationStatus(holdings, riskPolicy)
   addCheck(
     "concentration_policy",
     "Concentration policy",
-    maxSingleWeight <= numberValue(riskPolicy.max_single_stock_pct),
-    `Largest holding ${formatPct(
-      maxSingleWeight
-    )} must be at or below single-position limit ${formatPct(
-      numberValue(riskPolicy.max_single_stock_pct)
-    )}.`
+    concentration.passed,
+    concentration.message
   )
 
   if (universe && holdings.length > 0) {
@@ -294,7 +287,8 @@ function portfolioTotalValue(
   holdings: AgentHolding[]
 ) {
   const holdingsValue = holdings.reduce(
-    (sum, holding) => sum + numberValue(holding.market_value),
+    (sum, holding) =>
+      sum + numberValue(holding.market_value_base || holding.market_value),
     0
   )
   return numberValue(agent.cash_balance) + holdingsValue
@@ -308,6 +302,86 @@ function universeSymbols(universe: AgentInvestmentUniverse) {
       ...arrayValue(universe.watchlist),
     ].map((symbol) => symbol.toUpperCase())
   )
+}
+
+function getConcentrationStatus(
+  holdings: AgentHolding[],
+  riskPolicy: RiskPolicy
+) {
+  const maxStockWeight = holdings.reduce((max, holding) => {
+    if (isLikelyETF(holding)) return max
+    return Math.max(max, numberValue(holding.weight))
+  }, 0)
+  const maxEtfWeight = holdings.reduce((max, holding) => {
+    if (!isLikelyETF(holding)) return max
+    return Math.max(max, numberValue(holding.weight))
+  }, 0)
+  const stockLimit = numberValue(riskPolicy.max_single_stock_pct)
+  const etfLimit = numberValue(riskPolicy.max_etf_pct)
+  const stockPassed = maxStockWeight <= stockLimit
+  const etfPassed = maxEtfWeight <= etfLimit
+
+  if (stockPassed && etfPassed) {
+    return {
+      passed: true,
+      message: `Largest stock ${formatPct(
+        maxStockWeight
+      )} is within ${formatPct(stockLimit)}; largest ETF ${formatPct(
+        maxEtfWeight
+      )} is within ${formatPct(etfLimit)}.`,
+    }
+  }
+
+  const messages = []
+  if (!stockPassed) {
+    messages.push(
+      `Largest stock ${formatPct(
+        maxStockWeight
+      )} must be at or below single-stock limit ${formatPct(stockLimit)}.`
+    )
+  }
+
+  if (!etfPassed) {
+    messages.push(
+      `Largest ETF ${formatPct(
+        maxEtfWeight
+      )} must be at or below ETF limit ${formatPct(etfLimit)}.`
+    )
+  }
+
+  return {
+    passed: false,
+    message: messages.join(" "),
+  }
+}
+
+function isLikelyETF(holding: AgentHolding) {
+  const assetType = String(holding.asset_type || "").toLowerCase()
+  if (
+    assetType.includes("etf") ||
+    assetType.includes("fund") ||
+    assetType.includes("trust")
+  ) {
+    return true
+  }
+
+  return [
+    "VOO",
+    "VTI",
+    "SPY",
+    "QQQ",
+    "VGT",
+    "DIA",
+    "IWM",
+    "GLD",
+    "TLT",
+    "BND",
+    "KWEB",
+    "CQQQ",
+    "MCHI",
+    "FXI",
+    "ASHR",
+  ].includes(String(holding.symbol || "").toUpperCase())
 }
 
 function universeMatchesTargetMarkets(

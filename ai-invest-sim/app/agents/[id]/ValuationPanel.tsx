@@ -134,7 +134,7 @@ export default function ValuationPanel({
       className={
         embedded
           ? "rounded-xl"
-          : "mt-8 rounded-xl border border-slate-800 p-6"
+          : "mt-8 rounded-xl border border-blue-200 p-6"
       }
     >
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -148,7 +148,7 @@ export default function ValuationPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+          <div className="inline-flex overflow-hidden rounded-lg border border-blue-200 bg-white">
             {RANGE_OPTIONS.map((option) => (
               <button
                 key={option.value}
@@ -157,7 +157,7 @@ export default function ValuationPanel({
                 className={
                   range === option.value
                     ? "bg-blue-600 px-3 py-1.5 text-xs font-medium text-white"
-                    : "px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-900 hover:text-white"
+                    : "px-3 py-1.5 text-xs text-slate-500 hover:bg-blue-50 hover:text-white"
                 }
               >
                 {option.label}
@@ -170,7 +170,7 @@ export default function ValuationPanel({
             variant="outline"
             onClick={refreshValuation}
             disabled={isRefreshing || !canRefresh}
-            className="gap-2 border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+            className="gap-2 border-blue-200 bg-blue-50 text-white hover:bg-blue-100"
           >
             <RefreshCw className={isRefreshing ? "size-4 animate-spin" : "size-4"} />
             {isRefreshing ? "Updating" : "Update now"}
@@ -179,7 +179,7 @@ export default function ValuationPanel({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_220px]">
-        <div className="h-72 rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+        <div className="h-72 rounded-lg border border-blue-200 bg-white/80 p-3">
           {chartData.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-slate-500">
               No valuation history yet.
@@ -246,7 +246,7 @@ export default function ValuationPanel({
           )}
         </div>
 
-        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+        <div className="rounded-lg border border-blue-200 bg-white/80 p-4">
           <p className="text-sm text-slate-500">Latest Snapshot</p>
           <p className="mt-2 text-2xl font-bold">
             ${Number(latest?.total_value || 0).toLocaleString()}
@@ -274,7 +274,7 @@ export default function ValuationPanel({
       </div>
 
       {error && (
-        <div className="mt-4 rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-300">
+        <div className="mt-4 rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-700">
           {error}
         </div>
       )}

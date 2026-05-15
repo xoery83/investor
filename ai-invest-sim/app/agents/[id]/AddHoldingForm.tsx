@@ -32,6 +32,7 @@ export default function AddHoldingForm({
   const [quantity, setQuantity] = useState(0)
   const [averageCost, setAverageCost] = useState(0)
   const [currentPrice, setCurrentPrice] = useState(0)
+  const [currency, setCurrency] = useState("USD")
 
   const [lookupLoading, setLookupLoading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -64,6 +65,7 @@ export default function AddHoldingForm({
       setAssetName(existingHolding?.asset_name || "")
       setAssetType(draft.assetType || existingHolding?.asset_type || "stock")
       setAverageCost(Number(existingHolding?.average_cost || 0))
+      setCurrency(existingHolding?.currency || "USD")
       setError("")
       setQuoteMessage("Loading current quote for proposal action...")
 
@@ -91,6 +93,7 @@ export default function AddHoldingForm({
 
       setAssetName(quote?.name || existingHolding?.asset_name || "")
       setAssetType(assetType)
+      setCurrency(String(quote?.currency || existingHolding?.currency || "USD"))
       setCurrentPrice(price)
       setAverageCost(
         nextAction === "sell"
@@ -100,7 +103,9 @@ export default function AddHoldingForm({
       setQuantity(estimatedQuantity)
       setQuoteMessage(
         price > 0
-          ? `Proposal loaded: ${normalizedSymbol} @ $${price.toFixed(2)}, estimated ${estimatedQuantity} shares.`
+          ? `Proposal loaded: ${normalizedSymbol} @ ${String(
+              quote?.currency || existingHolding?.currency || "USD"
+            )} ${price.toFixed(2)}, estimated ${estimatedQuantity} shares.`
           : "Proposal loaded. Please enter price and quantity."
       )
     }
@@ -124,6 +129,7 @@ export default function AddHoldingForm({
       setAssetType(firstHolding.asset_type || "stock")
       setAverageCost(Number(firstHolding.average_cost || 0))
       setCurrentPrice(Number(firstHolding.current_price || 0))
+      setCurrency(firstHolding.currency || "USD")
     }
   }
 
@@ -141,6 +147,7 @@ export default function AddHoldingForm({
     setAssetType(holding.asset_type || "stock")
     setAverageCost(Number(holding.average_cost || 0))
     setCurrentPrice(Number(holding.current_price || 0))
+    setCurrency(holding.currency || "USD")
   }
 
   async function handleLookup() {
@@ -166,6 +173,7 @@ export default function AddHoldingForm({
     setSymbol(quote.symbol || symbol.toUpperCase())
     setAssetName(quote.name || "")
     setCurrentPrice(Number(quote.price || 0))
+    setCurrency(String(quote.currency || "USD"))
 
     setAssetType(inferAssetType(String(quote.assetType || ""), "stock"))
 
@@ -174,7 +182,9 @@ export default function AddHoldingForm({
     }
 
     setQuoteMessage(
-      `Quote loaded: ${quote.name} @ $${Number(quote.price || 0).toFixed(2)}`
+      `Quote loaded: ${quote.name} @ ${String(quote.currency || "USD")} ${Number(
+        quote.price || 0
+      ).toFixed(2)}`
     )
 
     setLookupLoading(false)
@@ -208,6 +218,7 @@ export default function AddHoldingForm({
         quantity,
         average_cost: averageCost,
         current_price: currentPrice,
+        currency,
       }),
     })
 
@@ -225,6 +236,7 @@ export default function AddHoldingForm({
     setQuantity(0)
     setAverageCost(0)
     setCurrentPrice(0)
+    setCurrency("USD")
     setQuoteMessage("")
 
     setLoading(false)
@@ -243,7 +255,7 @@ export default function AddHoldingForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="space-y-4 rounded-xl border border-slate-800 p-6 lg:sticky lg:top-6"
+      className="space-y-4 rounded-xl border border-blue-200 p-6 lg:sticky lg:top-6"
     >
       <div>
         <h2 className="text-xl font-semibold">Trade Holding</h2>
@@ -252,14 +264,14 @@ export default function AddHoldingForm({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-950 p-1">
+      <div className="grid grid-cols-2 gap-2 rounded-lg border border-blue-200 bg-white p-1">
         <button
           type="button"
           onClick={() => handleActionChange("buy")}
           className={
             action === "buy"
               ? "rounded-md bg-blue-600 px-3 py-2 text-sm"
-              : "rounded-md px-3 py-2 text-sm text-slate-400 hover:bg-slate-800"
+              : "rounded-md px-3 py-2 text-sm text-slate-500 hover:bg-blue-100"
           }
         >
           Buy
@@ -270,7 +282,7 @@ export default function AddHoldingForm({
           className={
             action === "sell"
               ? "rounded-md bg-red-600 px-3 py-2 text-sm"
-              : "rounded-md px-3 py-2 text-sm text-slate-400 hover:bg-slate-800"
+              : "rounded-md px-3 py-2 text-sm text-slate-500 hover:bg-blue-100"
           }
         >
           Sell
@@ -278,11 +290,11 @@ export default function AddHoldingForm({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Symbol</label>
+        <label className="block text-sm text-slate-500 mb-2">Symbol</label>
 
         <div className="flex gap-2">
           <input
-            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2"
+            className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
             placeholder="NVDA"
             value={symbol}
             list={action === "sell" ? "agent-holdings-symbols" : undefined}
@@ -301,7 +313,7 @@ export default function AddHoldingForm({
             type="button"
             onClick={handleLookup}
             disabled={lookupLoading || action === "sell"}
-            className="bg-slate-800 hover:bg-slate-700 disabled:bg-slate-700 px-4 py-2 rounded-lg whitespace-nowrap"
+            className="bg-blue-100 hover:bg-blue-100 disabled:bg-slate-200 px-4 py-2 rounded-lg whitespace-nowrap"
           >
             {lookupLoading ? "Looking..." : "Lookup"}
           </button>
@@ -309,9 +321,9 @@ export default function AddHoldingForm({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Asset Name</label>
+        <label className="block text-sm text-slate-500 mb-2">Asset Name</label>
         <input
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2"
+          className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           placeholder="NVIDIA Corporation"
           value={assetName}
           onChange={(e) => setAssetName(e.target.value)}
@@ -319,9 +331,9 @@ export default function AddHoldingForm({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Asset Type</label>
+        <label className="block text-sm text-slate-500 mb-2">Asset Type</label>
         <select
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2"
+          className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           value={assetType}
           onChange={(e) => setAssetType(e.target.value)}
         >
@@ -335,12 +347,12 @@ export default function AddHoldingForm({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">Quantity</label>
+        <label className="block text-sm text-slate-500 mb-2">Quantity</label>
         <input
           type="number"
           step="any"
           min="0"
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2"
+          className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           placeholder="10"
           value={quantity}
           onChange={(e) => setQuantity(Number(e.target.value))}
@@ -349,14 +361,14 @@ export default function AddHoldingForm({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">
+        <label className="block text-sm text-slate-500 mb-2">
           {action === "sell" ? "Average Cost" : "Average Cost"}
         </label>
         <input
           type="number"
           step="any"
           min="0"
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2"
+          className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           placeholder="Optional"
           value={averageCost}
           onChange={(e) => setAverageCost(Number(e.target.value))}
@@ -365,24 +377,41 @@ export default function AddHoldingForm({
       </div>
 
       <div>
-        <label className="block text-sm text-slate-400 mb-2">
+        <label className="block text-sm text-slate-500 mb-2">
           {action === "sell" ? "Sell Price" : "Current Price"}
         </label>
         <input
           type="number"
           step="any"
           min="0"
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2"
+          className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2"
           value={currentPrice}
           onChange={(e) => setCurrentPrice(Number(e.target.value))}
           required
         />
       </div>
 
+      <div>
+        <label className="block text-sm text-slate-500 mb-2">Currency</label>
+        <input
+          className="w-full bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 uppercase"
+          value={currency}
+          maxLength={3}
+          onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+          required
+        />
+        <p className="mt-1 text-xs text-slate-500">
+          Local trading currency. Portfolio totals convert to the agent base currency.
+        </p>
+      </div>
+
       {action === "sell" && selectedHolding && (
-        <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-sm text-slate-300">
-          Available: {formatShares(selectedHolding.quantity)} shares, market value $
-          {Number(selectedHolding.market_value || 0).toLocaleString()}
+        <div className="rounded-lg border border-blue-200 bg-white/80 p-3 text-sm text-slate-700">
+          Available: {formatShares(selectedHolding.quantity)} shares, local value{" "}
+          {selectedHolding.currency || "USD"}{" "}
+          {Number(
+            selectedHolding.market_value_local ?? selectedHolding.market_value ?? 0
+          ).toLocaleString()}
         </div>
       )}
 
@@ -397,8 +426,8 @@ export default function AddHoldingForm({
         disabled={loading}
         className={
           action === "sell"
-            ? "bg-red-600 hover:bg-red-700 disabled:bg-slate-700 px-4 py-2 rounded-lg"
-            : "bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 px-4 py-2 rounded-lg"
+            ? "bg-red-600 hover:bg-red-700 disabled:bg-slate-200 px-4 py-2 rounded-lg"
+            : "bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 px-4 py-2 rounded-lg"
         }
       >
         {loading ? "Submitting..." : action === "sell" ? "Sell Shares" : "Buy Holding"}

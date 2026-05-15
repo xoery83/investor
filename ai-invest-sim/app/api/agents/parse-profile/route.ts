@@ -123,7 +123,14 @@ Return this JSON shape exactly:
   }
 }
 
-Conservative default rule: if the request is vague, use target annual return 8-15%, max drawdown 20%, avoid options/leverage/crypto/penny stocks.`,
+Conservative default rule: if the request is vague, use target annual return 8-15%, max drawdown 20%, avoid options/leverage/crypto/penny stocks.
+
+Special parsing rules:
+- Do not broaden a niche target into generic "US large cap equities" or "broad market ETFs" unless the user explicitly asks for broad market exposure.
+- If the user says Chinese concept stocks, China tech, China healthcare, 中国概念股, 中概股, 中国科技, 中国医药, or similar, keep target_markets specific, for example ["US-listed Chinese ADRs", "Hong Kong-listed Chinese equities", "China technology sector", "China healthcare sector"] as appropriate.
+- For that China profile, allowed_assets should mention specific allowed wrappers such as "US-listed Chinese ADRs", "Hong Kong-listed China stocks", "China sector ETFs", "China internet/technology ETFs", and "China healthcare ETFs"; avoid broad US index ETFs unless explicitly requested.
+- Preserve geographic listing venue separately from economic exposure. "listed in the US" can still mean China economic exposure, not generic US equities.
+- If the user mentions Hong Kong and US listings together, include both listing venues in target_markets and manager_instructions.`,
         },
       ],
     })

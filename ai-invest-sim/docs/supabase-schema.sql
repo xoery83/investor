@@ -34,6 +34,7 @@ create table if not exists public.agents (
   initial_capital numeric not null default 100000,
   current_value numeric not null default 100000,
   cash_balance numeric not null default 100000,
+  base_currency text not null default 'USD',
   is_active boolean not null default true,
   rebalance_frequency text not null default 'daily'
     check (rebalance_frequency in ('daily', 'weekly', 'monthly')),
@@ -67,8 +68,15 @@ create table if not exists public.agent_holdings (
   asset_type text not null default 'stock',
   quantity numeric not null default 0,
   average_cost numeric not null default 0,
+  average_cost_base numeric not null default 0,
   current_price numeric not null default 0,
+  current_price_base numeric not null default 0,
+  currency text not null default 'USD',
   market_value numeric not null default 0,
+  market_value_local numeric not null default 0,
+  market_value_base numeric not null default 0,
+  fx_rate_to_base numeric not null default 1,
+  fx_fetched_at timestamptz,
   weight numeric not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -97,6 +105,7 @@ create table if not exists public.agent_valuations (
   total_value numeric not null default 0,
   cash_value numeric not null default 0,
   holdings_value numeric not null default 0,
+  base_currency text not null default 'USD',
   daily_return numeric not null default 0,
   cumulative_return numeric not null default 0,
   annualized_return numeric not null default 0,
@@ -122,6 +131,19 @@ create table if not exists public.market_quotes_cache (
 
 create index if not exists market_quotes_cache_fetched_at_idx
   on public.market_quotes_cache(fetched_at desc);
+
+create table if not exists public.fx_rates_cache (
+  from_currency text not null,
+  to_currency text not null,
+  rate numeric not null default 1,
+  provider text not null default 'yahoo',
+  fetched_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (from_currency, to_currency)
+);
+
+create index if not exists fx_rates_cache_fetched_at_idx
+  on public.fx_rates_cache(fetched_at desc);
 
 create table if not exists public.agent_profiles (
   id uuid primary key default gen_random_uuid(),

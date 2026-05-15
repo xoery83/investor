@@ -44,7 +44,7 @@ export function diagnosePortfolio({
   const overweightHoldings = holdings
     .filter(
       (holding) =>
-        !isLikelyETF(holding.symbol) &&
+        !isLikelyETF(holding) &&
         Number(holding.weight || 0) > maxSingleStockPct
     )
     .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))
@@ -127,10 +127,27 @@ function inferCashWeight(holdings: AgentHolding[]) {
   return roundWeight(Math.max(0, 100 - holdingsWeight))
 }
 
-function isLikelyETF(symbol: string) {
-  return ["VOO", "VTI", "SPY", "QQQ", "VGT", "DIA", "IWM", "GLD", "TLT", "BND"].includes(
-    symbol.toUpperCase()
-  )
+function isLikelyETF(holding: AgentHolding) {
+  const assetType = String(holding.asset_type || "").toLowerCase()
+  if (assetType.includes("etf") || assetType.includes("fund")) return true
+
+  return [
+    "VOO",
+    "VTI",
+    "SPY",
+    "QQQ",
+    "VGT",
+    "DIA",
+    "IWM",
+    "GLD",
+    "TLT",
+    "BND",
+    "KWEB",
+    "CQQQ",
+    "MCHI",
+    "FXI",
+    "ASHR",
+  ].includes(holding.symbol.toUpperCase())
 }
 
 function roundWeight(value: number) {

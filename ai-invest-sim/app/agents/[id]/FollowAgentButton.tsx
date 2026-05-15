@@ -97,8 +97,8 @@ export default function FollowAgentButton({
         disabled={loading}
         className={
           following
-            ? "rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-blue-200 hover:bg-blue-500/20 disabled:bg-slate-700"
-            : "rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:bg-slate-700"
+            ? "rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-blue-700 hover:bg-blue-500/20 disabled:bg-slate-200"
+            : "rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:bg-slate-200"
         }
       >
         {loading ? "Updating..." : following ? "Following" : "Follow"}

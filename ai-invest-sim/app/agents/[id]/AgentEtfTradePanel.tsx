@@ -73,7 +73,7 @@ export default function AgentEtfTradePanel({
             Allocate cash from your personal simulator portfolio into this agent.
           </p>
         </div>
-        <Link href="/portfolio" className="text-sm text-blue-300 hover:text-blue-200">
+        <Link href="/portfolio" className="text-sm text-blue-600 hover:text-blue-700">
           View portfolio
         </Link>
       </div>
@@ -87,20 +87,20 @@ export default function AgentEtfTradePanel({
             step="1"
             value={amount}
             onChange={(event) => setAmount(Number(event.target.value))}
-            className="w-44 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2"
+            className="w-44 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2"
           />
         </label>
         <button
           type="button"
           onClick={buyAgentEtf}
           disabled={loading || amount <= 0}
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:bg-slate-700"
+          className="rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:bg-slate-200"
         >
           {loading ? "Buying..." : "Buy Agent ETF"}
         </button>
       </div>
 
-      {message && <p className="mt-3 text-sm text-emerald-300">{message}</p>}
+      {message && <p className="mt-3 text-sm text-emerald-700">{message}</p>}
       {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
     </section>
   )

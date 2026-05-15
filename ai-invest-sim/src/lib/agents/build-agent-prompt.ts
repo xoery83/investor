@@ -38,7 +38,7 @@ import type { PortfolioDiagnostic } from "./diagnose-portfolio"
         ? holdings
             .map(
               (h) =>
-                `- ${h.symbol}: ${h.weight}% weight, market value ${h.market_value}, current price ${h.current_price}`
+                `- ${h.symbol}: ${h.weight}% weight, local value ${h.market_value_local || h.market_value} ${h.currency || "USD"}, base value ${h.market_value_base || h.market_value}, current price ${h.current_price} ${h.currency || "USD"}`
             )
             .join("\n")
         : "No current holdings. Portfolio is currently in cash."
@@ -157,7 +157,7 @@ import type { PortfolioDiagnostic } from "./diagnose-portfolio"
   
   Current Holdings Market Value:
 ${holdings.reduce(
-  (sum, h) => sum + Number(h.market_value || 0),
+  (sum, h) => sum + Number(h.market_value_base || h.market_value || 0),
   0
 )}
   Current Holdings:

@@ -60,10 +60,10 @@ export default function AgentPortfolioPanel({
           : "grid grid-cols-1 gap-6"
       }
     >
-      <div className="rounded-xl border border-slate-800 p-6">
+      <div className="rounded-xl border border-blue-200 p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xl font-semibold">Portfolio Workspace</h2>
-          <div className="inline-flex overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+          <div className="inline-flex overflow-hidden rounded-lg border border-blue-200 bg-white">
             <TabButton
               active={activeTab === "holdings"}
               onClick={() => setActiveTab("holdings")}
@@ -126,35 +126,41 @@ function HoldingsTable({
         <p className="text-slate-500">No holdings yet.</p>
       ) : (
         <div className="overflow-x-auto">
-          <div className="grid min-w-[760px] grid-cols-[1.1fr_0.9fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 border-b border-slate-800 pb-2 text-sm text-slate-500">
+          <div className="grid min-w-[980px] grid-cols-[1.1fr_0.8fr_0.7fr_0.8fr_0.8fr_0.7fr_0.7fr_0.8fr_1fr] gap-3 border-b border-blue-200 pb-2 text-sm text-slate-500">
             <span>Symbol</span>
             <span>Asset Type</span>
             <span>Shares</span>
             <span>Weight</span>
             <span>Price</span>
+            <span>CCY</span>
+            <span>FX</span>
             <span>Source</span>
-            <span className="text-right">Market Value</span>
+            <span className="text-right">Base Value</span>
           </div>
 
           {holdings.map((holding) => (
             <div
               key={holding.id}
-              className="grid min-w-[760px] grid-cols-[1.1fr_0.9fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr] gap-3 border-b border-slate-800 py-2 text-sm"
+              className="grid min-w-[980px] grid-cols-[1.1fr_0.8fr_0.7fr_0.8fr_0.8fr_0.7fr_0.7fr_0.8fr_1fr] gap-3 border-b border-blue-200 py-2 text-sm"
             >
               <button
                 type="button"
                 onClick={() => onUseHolding?.(holding)}
-                className="text-left font-medium text-blue-300 hover:text-blue-200"
+                className="text-left font-medium text-blue-600 hover:text-blue-700"
                 title="Load this holding into the trade form"
               >
                 {holding.symbol}
               </button>
-              <span className="capitalize text-slate-300">
+              <span className="capitalize text-slate-700">
                 {holding.asset_type || "stock"}
               </span>
               <span>{formatShares(holding.quantity)}</span>
               <span>{Number(holding.weight || 0).toFixed(2)}%</span>
-              <span>${Number(holding.current_price || 0).toLocaleString()}</span>
+              <span>{Number(holding.current_price || 0).toLocaleString()}</span>
+              <span className="font-mono text-xs">
+                {(holding.currency || "USD").toUpperCase()}
+              </span>
+              <span>{Number(holding.fx_rate_to_base || 1).toFixed(4)}</span>
               <span>
                 <PriceSourceBadge
                   source={holding.price_source || "manual"}
@@ -162,7 +168,9 @@ function HoldingsTable({
                 />
               </span>
               <span className="text-right">
-                ${Number(holding.market_value || 0).toLocaleString()}
+                ${Number(
+                  holding.market_value_base || holding.market_value || 0
+                ).toLocaleString()}
               </span>
             </div>
           ))}
@@ -188,7 +196,7 @@ function TabButton({
       className={
         active
           ? "bg-blue-600 px-3 py-1.5 text-xs font-medium text-white"
-          : "px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-900 hover:text-white"
+          : "px-3 py-1.5 text-xs text-slate-500 hover:bg-blue-50 hover:text-white"
       }
     >
       {children}
@@ -213,10 +221,10 @@ function PriceSourceBadge({
 
   const classBySource = {
     pre: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
-    regular: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+    regular: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700",
     post: "border-violet-500/30 bg-violet-500/10 text-violet-300",
-    manual: "border-slate-600 bg-slate-800 text-slate-300",
-    cash: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+    manual: "border-blue-200 bg-blue-100 text-slate-700",
+    cash: "border-amber-500/30 bg-amber-500/10 text-amber-700",
   } satisfies Record<NonNullable<UpdatedHolding["price_source"]>, string>
 
   return (

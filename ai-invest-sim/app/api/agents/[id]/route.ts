@@ -167,7 +167,7 @@ export async function GET(
   const tradeProposals = tradeProposalsResult.data || []
 
   const holdingsValue = (holdings || []).reduce((sum, holding) => {
-    return sum + Number(holding.market_value || 0)
+    return sum + Number(holding.market_value_base || holding.market_value || 0)
   }, 0)
 
   const cashBalance = Number(agent.cash_balance || 0)
@@ -348,6 +348,7 @@ export async function PATCH(
     risk_level,
     rebalance_frequency,
     model_name,
+    base_currency,
     visibility,
     lifecycle_status,
     manual_trade_allowed,
@@ -386,6 +387,37 @@ export async function PATCH(
     existingAgent.visibility
   )
   const resolvedLifecycleStatus = lifecycle_status || "active"
+  const resolvedBaseCurrency = String(
+    base_currency || existingAgent.base_currency || "USD"
+  )
+    .trim()
+    .toUpperCase()
+
+  if (resolvedBaseCurrency !== String(existingAgent.base_currency || "USD")) {
+    const { count: holdingsCount, error: holdingsCountError } = await supabase
+      .from("agent_holdings")
+      .select("id", { count: "exact", head: true })
+      .eq("agent_id", id)
+
+    if (holdingsCountError) {
+      return NextResponse.json(
+        { success: false, error: holdingsCountError.message },
+        { status: 500 }
+      )
+    }
+
+    if ((holdingsCount || 0) > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Base currency can only be changed before the agent has holdings.",
+        },
+        { status: 400 }
+      )
+    }
+  }
+
   const lifecyclePermission = await validateLifecycleTransition({
     agent: existingAgent,
     userId: requestUser.id,
@@ -454,6 +486,7 @@ export async function PATCH(
       risk_level,
       rebalance_frequency,
       model_name,
+      base_currency: resolvedBaseCurrency,
       visibility: resolvedVisibility,
       lifecycle_status: resolvedLifecycleStatus,
       is_active: resolvedLifecycleStatus === "active",
