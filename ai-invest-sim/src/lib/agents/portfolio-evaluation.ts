@@ -5,6 +5,10 @@ import type {
   AgentHolding,
   RiskPolicy,
 } from "../types/agent"
+import {
+  getHistoricalPrices,
+  type MarketHistoryRow,
+} from "../market/get-history"
 
 type EvaluationScope =
   | "current_portfolio"
@@ -101,6 +105,7 @@ export async function evaluatePortfolio({
   proposal,
   riskPolicy,
   evaluationScope,
+  period = "1Y",
 }: PortfolioEvaluationInput) {
   const allocation = getAllocation({ holdings, proposal })
   const symbols = allocation
@@ -114,16 +119,23 @@ export async function evaluatePortfolio({
     exposures,
     riskPolicy,
   })
+  const historicalMetrics = await buildHistoricalMetrics({
+    supabase,
+    allocation,
+    period: period === "3Y" ? "3Y" : "1Y",
+  })
   const metrics = buildMetrics({
     allocation,
     effective,
     overlapWarnings,
     riskPolicy,
+    historicalMetrics,
   })
   const targetFitScore = calculateTargetFitScore(metrics)
   const targetReturnProbability = estimateTargetReturnProbability({
     targetFitScore,
     evaluationScope,
+    metrics,
   })
 
   return {
@@ -342,11 +354,13 @@ function buildMetrics({
   effective,
   overlapWarnings,
   riskPolicy,
+  historicalMetrics,
 }: {
   allocation: AllocationItem[]
   effective: ReturnType<typeof calculateEffectiveExposures>
   overlapWarnings: unknown[]
   riskPolicy: RiskPolicy
+  historicalMetrics: HistoricalMetrics
 }) {
   const cashWeight =
     allocation.find((item) => item.symbol === "CASH")?.target_weight || 0
@@ -365,10 +379,126 @@ function buildMetrics({
       largestEffectiveExposure <= riskPolicy.max_single_stock_pct,
     overlap_warning_count: overlapWarnings.length,
     high_risk_warning_count: riskWarnings,
-    historical_return_status: "not_available",
-    historical_return_note:
-      "Historical return evaluation requires cached daily price history for proposal symbols.",
+    ...historicalMetrics,
   }
+}
+
+type HistoricalMetrics = {
+  historical_return_status: "available" | "partial" | "not_available"
+  historical_return_note: string
+  historical_annualized_return_pct: number | null
+  historical_max_drawdown_pct: number | null
+  historical_coverage_weight_pct: number
+  historical_symbol_count: number
+}
+
+async function buildHistoricalMetrics({
+  supabase,
+  allocation,
+  period,
+}: {
+  supabase: SupabaseClient
+  allocation: AllocationItem[]
+  period: "1Y" | "3Y"
+}): Promise<HistoricalMetrics> {
+  const investable = allocation
+    .filter((item) => item.symbol !== "CASH")
+    .filter((item) => Number(item.target_weight || 0) > 0)
+    .slice(0, 24)
+
+  const totalInvestableWeight = investable.reduce(
+    (sum, item) => sum + Number(item.target_weight || 0),
+    0
+  )
+
+  if (investable.length === 0 || totalInvestableWeight <= 0) {
+    return {
+      historical_return_status: "not_available",
+      historical_return_note: "No non-cash allocation is available for history analysis.",
+      historical_annualized_return_pct: null,
+      historical_max_drawdown_pct: null,
+      historical_coverage_weight_pct: 0,
+      historical_symbol_count: 0,
+    }
+  }
+
+  const rowsBySymbol = new Map<string, MarketHistoryRow[]>()
+  await Promise.all(
+    investable.map(async (item) => {
+      const rows = await getHistoricalPrices({
+        supabase,
+        symbol: item.symbol,
+        period,
+      })
+      const cleanRows = rows.filter((row) => getHistoryPrice(row) > 0)
+      if (cleanRows.length >= 40) rowsBySymbol.set(item.symbol, cleanRows)
+    })
+  )
+
+  let weightedAnnualized = 0
+  let weightedDrawdown = 0
+  let coveredWeight = 0
+
+  for (const item of investable) {
+    const rows = rowsBySymbol.get(item.symbol)
+    if (!rows || rows.length < 40) continue
+
+    const first = getHistoryPrice(rows[0])
+    const last = getHistoryPrice(rows[rows.length - 1])
+    if (first <= 0 || last <= 0) continue
+
+    const fullPortfolioWeight = Number(item.target_weight || 0) / 100
+    const totalReturn = last / first - 1
+    const annualizedReturn =
+      Math.pow(1 + totalReturn, 252 / Math.max(rows.length, 1)) - 1
+    weightedAnnualized += annualizedReturn * fullPortfolioWeight
+    weightedDrawdown += calculateMaxDrawdown(rows) * fullPortfolioWeight
+    coveredWeight += Number(item.target_weight || 0)
+  }
+
+  const coverage = totalInvestableWeight
+    ? Math.min(100, (coveredWeight / totalInvestableWeight) * 100)
+    : 0
+
+  if (coveredWeight <= 0) {
+    return {
+      historical_return_status: "not_available",
+      historical_return_note:
+        "Historical return evaluation requires cached or fetchable daily price history for proposal symbols.",
+      historical_annualized_return_pct: null,
+      historical_max_drawdown_pct: null,
+      historical_coverage_weight_pct: 0,
+      historical_symbol_count: 0,
+    }
+  }
+
+  return {
+    historical_return_status: coverage >= 75 ? "available" : "partial",
+    historical_return_note:
+      coverage >= 75
+        ? `Historical estimate uses ${period} daily Yahoo price history.`
+        : `Historical estimate is partial because only ${round(coverage)}% of non-cash allocation has enough history.`,
+    historical_annualized_return_pct: round(weightedAnnualized * 100),
+    historical_max_drawdown_pct: round(weightedDrawdown * 100),
+    historical_coverage_weight_pct: round(coverage),
+    historical_symbol_count: rowsBySymbol.size,
+  }
+}
+
+function getHistoryPrice(row: MarketHistoryRow) {
+  return Number(row.adj_close || row.close || 0)
+}
+
+function calculateMaxDrawdown(rows: MarketHistoryRow[]) {
+  let peak = 0
+  let maxDrawdown = 0
+  for (const row of rows) {
+    const price = getHistoryPrice(row)
+    if (price <= 0) continue
+    peak = Math.max(peak, price)
+    if (peak > 0) maxDrawdown = Math.min(maxDrawdown, price / peak - 1)
+  }
+  return maxDrawdown
 }
 
 function calculateTargetFitScore(metrics: Record<string, unknown>) {
@@ -377,19 +507,36 @@ function calculateTargetFitScore(metrics: Record<string, unknown>) {
   if (!metrics.concentration_policy_pass) score -= 25
   score -= Number(metrics.overlap_warning_count || 0) * 5
   score -= Number(metrics.high_risk_warning_count || 0) * 10
+  if (metrics.historical_return_status === "available") {
+    const annualized = Number(metrics.historical_annualized_return_pct || 0)
+    const drawdown = Math.abs(Number(metrics.historical_max_drawdown_pct || 0))
+    if (annualized < 0) score -= 12
+    if (drawdown > 35) score -= 8
+  }
   return Math.max(0, Math.min(100, Math.round(score)))
 }
 
 function estimateTargetReturnProbability({
   targetFitScore,
+  metrics,
 }: {
   targetFitScore: number
   evaluationScope: EvaluationScope
+  metrics?: Record<string, unknown>
 }) {
-  if (targetFitScore >= 90) return 0.65
-  if (targetFitScore >= 75) return 0.55
-  if (targetFitScore >= 60) return 0.45
-  return 0.35
+  let probability = 0.35
+  if (targetFitScore >= 90) probability = 0.65
+  else if (targetFitScore >= 75) probability = 0.55
+  else if (targetFitScore >= 60) probability = 0.45
+
+  if (metrics?.historical_return_status === "available") {
+    const annualized = Number(metrics.historical_annualized_return_pct || 0)
+    if (annualized >= 15) probability += 0.08
+    else if (annualized >= 8) probability += 0.04
+    else if (annualized < 0) probability -= 0.1
+  }
+
+  return Math.max(0.05, Math.min(0.85, round(probability)))
 }
 
 function buildSummary({
@@ -415,8 +562,13 @@ function buildSummary({
     exposures.length > 0
       ? `${exposures.length} ETF look-through rows used`
       : "no ETF look-through data available"
+  const historyText =
+    metrics.historical_return_status === "available" ||
+    metrics.historical_return_status === "partial"
+      ? `historical annualized return ${metrics.historical_annualized_return_pct}% with max drawdown ${metrics.historical_max_drawdown_pct}%`
+      : String(metrics.historical_return_note || "historical return not available")
 
-  return `${agent.name} evaluation score ${targetFitScore}/100; target return fit estimate ${Math.round(targetReturnProbability * 100)}%; ${overlapText}; ${lookthroughText}; cash ${metrics.cash_weight}%.`
+  return `${agent.name} evaluation score ${targetFitScore}/100; target return fit estimate ${Math.round(targetReturnProbability * 100)}%; ${historyText}; ${overlapText}; ${lookthroughText}; cash ${metrics.cash_weight}%.`
 }
 
 function groupByInstrument(exposures: InstrumentExposure[]) {

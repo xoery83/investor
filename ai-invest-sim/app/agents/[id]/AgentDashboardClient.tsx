@@ -79,6 +79,8 @@ export default function AgentDashboardClient({
     }))
   )
   const [currentRuns, setCurrentRuns] = React.useState(runs)
+  const [currentMemoryCards, setCurrentMemoryCards] =
+    React.useState(memoryCards)
   const [currentTradeProposals, setCurrentTradeProposals] =
     React.useState(tradeProposals)
   const [currentInitializationSession, setCurrentInitializationSession] =
@@ -276,6 +278,13 @@ export default function AgentDashboardClient({
               />
             )}
 
+            {pendingRunType && (
+              <div className="w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                {getRunProgressTitle(pendingRunType)} The latest result will
+                appear at the front of Trade Proposals when generation finishes.
+              </div>
+            )}
+
             {permissions.canEdit && (
               <Link
                 href={`/agents/${agent.id}/settings`}
@@ -422,7 +431,7 @@ export default function AgentDashboardClient({
           )}
         </section>
 
-        {memoryCards.length > 0 && (
+        {currentMemoryCards.length > 0 && (
           <section className="mb-8 rounded-xl border border-blue-200 bg-white/55 p-4">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -435,12 +444,38 @@ export default function AgentDashboardClient({
                 </p>
               </div>
               <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-slate-600">
-                {memoryCards.length} active
+                {currentMemoryCards.length} active
               </span>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {memoryCards.slice(0, 6).map((card) => (
-                <MemoryCardPreview key={card.id} card={card} />
+              {currentMemoryCards.slice(0, 9).map((card) => (
+                <MemoryCardPreview
+                  key={card.id}
+                  agentId={agent.id}
+                  card={card}
+                  canEdit={permissions.canEdit}
+                  onCardUpdated={(nextCard) => {
+                    if (nextCard.status !== "active") {
+                      setCurrentMemoryCards((previous) =>
+                        previous.filter((item) => item.id !== nextCard.id)
+                      )
+                      return
+                    }
+                    setCurrentMemoryCards((previous) =>
+                      previous
+                        .map((item) =>
+                          item.id === nextCard.id ? nextCard : item
+                        )
+                        .sort(
+                          (a, b) =>
+                            Number(b.importance || 0) -
+                              Number(a.importance || 0) ||
+                            new Date(b.updated_at).getTime() -
+                              new Date(a.updated_at).getTime()
+                        )
+                    )
+                  }}
+                />
               ))}
             </div>
           </section>
@@ -670,19 +705,79 @@ function ConfigTabButton({
   )
 }
 
-function MemoryCardPreview({ card }: { card: AgentMemoryCard }) {
+function MemoryCardPreview({
+  agentId,
+  card,
+  canEdit,
+  onCardUpdated,
+}: {
+  agentId: string
+  card: AgentMemoryCard
+  canEdit: boolean
+  onCardUpdated: (card: AgentMemoryCard) => void
+}) {
+  const [expanded, setExpanded] = React.useState(false)
+  const [loadingAction, setLoadingAction] = React.useState("")
+  const [error, setError] = React.useState("")
+  const pinned = Boolean(card.metadata?.pinned)
+
+  async function updateMemory(action: "archive" | "supersede" | "pin" | "unpin") {
+    setLoadingAction(action)
+    setError("")
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      if (!token) throw new Error("Please log in before updating memory.")
+
+      const res = await fetch(`/api/agents/${agentId}/memory/${card.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        throw new Error(data.error || "Failed to update memory card.")
+      }
+      onCardUpdated(data.memory_card as AgentMemoryCard)
+      clearAgentDetailCache(agentId)
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Failed to update memory card."
+      )
+    } finally {
+      setLoadingAction("")
+    }
+  }
+
   return (
     <article className="rounded-lg border border-blue-100 bg-white/75 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] uppercase tracking-wide text-blue-700">
-          {formatSlug(card.memory_type)}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] uppercase tracking-wide text-blue-700">
+            {formatSlug(card.memory_type)}
+          </span>
+          {pinned && (
+            <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-700">
+              Pinned
+            </span>
+          )}
+        </div>
         <span className="text-[11px] text-slate-500">
           importance {card.importance}
         </span>
       </div>
       <h3 className="text-sm font-semibold text-slate-800">{card.title}</h3>
-      <p className="mt-2 line-clamp-4 text-xs leading-relaxed text-slate-600">
+      <p
+        className={
+          expanded
+            ? "mt-2 text-xs leading-relaxed text-slate-600"
+            : "mt-2 line-clamp-4 text-xs leading-relaxed text-slate-600"
+        }
+      >
         {card.content}
       </p>
       {card.symbols?.length > 0 && (
@@ -697,6 +792,48 @@ function MemoryCardPreview({ card }: { card: AgentMemoryCard }) {
           ))}
         </div>
       )}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="rounded-md border border-blue-100 bg-white px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-50"
+        >
+          {expanded ? "Collapse" : "Expand"}
+        </button>
+        {canEdit && (
+          <>
+            <button
+              type="button"
+              onClick={() => updateMemory(pinned ? "unpin" : "pin")}
+              disabled={Boolean(loadingAction)}
+              className="rounded-md border border-blue-100 bg-white px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-50 disabled:text-slate-400"
+            >
+              {loadingAction === "pin" || loadingAction === "unpin"
+                ? "Saving..."
+                : pinned
+                  ? "Unpin"
+                  : "Pin"}
+            </button>
+            <button
+              type="button"
+              onClick={() => updateMemory("supersede")}
+              disabled={Boolean(loadingAction)}
+              className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-100 disabled:text-slate-400"
+            >
+              Supersede
+            </button>
+            <button
+              type="button"
+              onClick={() => updateMemory("archive")}
+              disabled={Boolean(loadingAction)}
+              className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700 hover:bg-red-100 disabled:text-slate-400"
+            >
+              Archive
+            </button>
+          </>
+        )}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </article>
   )
 }
@@ -1740,7 +1877,7 @@ function PortfolioEvaluationPanel({
           {evaluation.source || "local"}
         </span>
       </div>
-      <div className="mt-2 grid gap-3 text-sm md:grid-cols-4">
+      <div className="mt-2 grid gap-3 text-sm md:grid-cols-4 xl:grid-cols-7">
         <Metric
           label="Fit Score"
           value={score === null ? "--" : `${score}/100`}
@@ -1762,6 +1899,30 @@ function PortfolioEvaluationPanel({
           value={
             typeof metrics.largest_effective_exposure === "number"
               ? `${metrics.largest_effective_exposure.toFixed(2)}%`
+              : "--"
+          }
+        />
+        <Metric
+          label="Hist. Annualized"
+          value={
+            typeof metrics.historical_annualized_return_pct === "number"
+              ? `${metrics.historical_annualized_return_pct.toFixed(2)}%`
+              : "--"
+          }
+        />
+        <Metric
+          label="Hist. Drawdown"
+          value={
+            typeof metrics.historical_max_drawdown_pct === "number"
+              ? `${metrics.historical_max_drawdown_pct.toFixed(2)}%`
+              : "--"
+          }
+        />
+        <Metric
+          label="History Coverage"
+          value={
+            typeof metrics.historical_coverage_weight_pct === "number"
+              ? `${metrics.historical_coverage_weight_pct.toFixed(0)}%`
               : "--"
           }
         />
