@@ -15,6 +15,7 @@ import type {
   Agent,
   AgentHolding,
   AgentInitializationSession,
+  AgentMemoryCard,
   AgentProfile,
   AgentRun,
   AgentValuation,
@@ -46,6 +47,7 @@ type AgentDashboardClientProps = {
   profile: AgentProfile
   riskPolicy: RiskPolicy
   workflowConfig: WorkflowConfig
+  memoryCards: AgentMemoryCard[]
   permissions: AgentDashboardPermissions
   isFollowing: boolean
   initialSummary: PortfolioSummary
@@ -61,6 +63,7 @@ export default function AgentDashboardClient({
   profile,
   riskPolicy,
   workflowConfig,
+  memoryCards,
   permissions,
   isFollowing,
   initialSummary,
@@ -419,6 +422,30 @@ export default function AgentDashboardClient({
           )}
         </section>
 
+        {memoryCards.length > 0 && (
+          <section className="mb-8 rounded-xl border border-blue-200 bg-white/55 p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-medium text-slate-700">
+                  Agent Memory
+                </h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Active long-term memory used by future initialization and
+                  rebalance prompts.
+                </p>
+              </div>
+              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-slate-600">
+                {memoryCards.length} active
+              </span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {memoryCards.slice(0, 6).map((card) => (
+                <MemoryCardPreview key={card.id} card={card} />
+              ))}
+            </div>
+          </section>
+        )}
+
         <div ref={tradeSectionRef} className="scroll-mt-6">
           <AgentPortfolioPanel
             agentId={agent.id}
@@ -640,6 +667,37 @@ function ConfigTabButton({
     >
       {children}
     </button>
+  )
+}
+
+function MemoryCardPreview({ card }: { card: AgentMemoryCard }) {
+  return (
+    <article className="rounded-lg border border-blue-100 bg-white/75 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] uppercase tracking-wide text-blue-700">
+          {formatSlug(card.memory_type)}
+        </span>
+        <span className="text-[11px] text-slate-500">
+          importance {card.importance}
+        </span>
+      </div>
+      <h3 className="text-sm font-semibold text-slate-800">{card.title}</h3>
+      <p className="mt-2 line-clamp-4 text-xs leading-relaxed text-slate-600">
+        {card.content}
+      </p>
+      {card.symbols?.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {card.symbols.slice(0, 6).map((symbol) => (
+            <span
+              key={symbol}
+              className="rounded border border-blue-100 bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] text-blue-700"
+            >
+              {symbol}
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
   )
 }
 

@@ -13,6 +13,7 @@ import type {
   AgentRun,
   AgentInitializationSession,
   AgentProfile,
+  AgentMemoryCard,
   RiskPolicy,
   TradeProposalWithValidation,
   WorkflowConfig,
@@ -44,6 +45,7 @@ type AgentDetailResponse = {
   profile: AgentProfile
   risk_policy: RiskPolicy
   workflow_config: WorkflowConfig
+  memory_cards?: AgentMemoryCard[]
   permissions?: AgentDashboardPermissions
   is_following?: boolean
   portfolio_summary?: {
@@ -140,6 +142,7 @@ export default function AgentDashboardPage() {
     profile,
     risk_policy,
     workflow_config,
+    memory_cards,
     portfolio_summary,
   } = data
 
@@ -154,6 +157,7 @@ export default function AgentDashboardPage() {
       profile={profile}
       riskPolicy={risk_policy}
       workflowConfig={workflow_config}
+      memoryCards={memory_cards || []}
       permissions={
         data.permissions || {
           canEdit: false,

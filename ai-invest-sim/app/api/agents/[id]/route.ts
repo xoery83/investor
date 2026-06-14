@@ -7,7 +7,10 @@ import {
   defaultWorkflowConfig,
 } from "../../../../src/lib/agents/default-config"
 import { generateInvestmentUniverse } from "../../../../src/lib/agents/investment-universe"
-import { addMemoryCards } from "../../../../src/lib/agents/memory-cards"
+import {
+  addMemoryCards,
+  getActiveMemoryCards,
+} from "../../../../src/lib/agents/memory-cards"
 import { validateAgentPublicationReadiness } from "../../../../src/lib/agents/publication-readiness"
 import {
   canActivateMoreAgents,
@@ -101,6 +104,7 @@ export async function GET(
     riskPolicy,
     workflowConfig,
     investmentUniverse,
+    memoryCards,
   ] = await Promise.all([
     followingPromise,
     creatorProfilePromise,
@@ -134,6 +138,7 @@ export async function GET(
     getRiskPolicy(id),
     getWorkflowConfig(id),
     getInvestmentUniverse(id),
+    getActiveMemoryCards(supabase, id, 20),
   ])
 
   if (holdingsResult.error) {
@@ -204,6 +209,7 @@ export async function GET(
     risk_policy: riskPolicy,
     workflow_config: workflowConfig,
     investment_universe: investmentUniverse,
+    memory_cards: memoryCards,
     permissions: {
       canEdit: canEditAgent(requestUser, agent).allowed,
       canRun: canRunAgent(requestUser, agent).allowed,
