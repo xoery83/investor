@@ -7,6 +7,8 @@ import type {
   RiskPolicy,
 } from "../types/agent"
 import { normalizeMarketSymbol } from "../market/normalize-symbol"
+import { temperatureParam } from "../openai/model-params"
+import { DEFAULT_AGENT_MODEL } from "./model-options"
 
 type UniverseGenerationInput = {
   agent: Agent
@@ -21,8 +23,6 @@ type UniverseGenerationResult = {
   >
   prompt: string
 }
-
-const MODEL = "gpt-4.1-mini"
 
 export async function generateInvestmentUniverse({
   agent,
@@ -49,9 +49,10 @@ export async function generateInvestmentUniverse({
 
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const model = agent.model_name || DEFAULT_AGENT_MODEL
     const completion = await openai.chat.completions.create({
-      model: agent.model_name || MODEL,
-      temperature: 0.15,
+      model,
+      ...temperatureParam(model, 0.15),
       response_format: { type: "json_object" },
       messages: [
         {

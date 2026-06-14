@@ -99,5 +99,46 @@ export async function PATCH(
     )
   }
 
+  await markInitializationExecuted(proposalId).catch(() => null)
+
   return NextResponse.json({ success: true, trade_proposal: data })
+}
+
+async function markInitializationExecuted(proposalId: string) {
+  const now = new Date().toISOString()
+  const { data: version, error: versionError } = await supabase
+    .from("agent_initialization_versions")
+    .update({ status: "executed" })
+    .eq("trade_proposal_id", proposalId)
+    .select("id,session_id")
+    .maybeSingle()
+
+  if (versionError || !version) {
+    if (isMissingInitializationTableError(versionError?.message || "")) return
+    if (!version) return
+    return
+  }
+
+  const { error: sessionError } = await supabase
+    .from("agent_initialization_sessions")
+    .update({
+      status: "executed",
+      approved_version_id: version.id,
+      approved_at: now,
+      executed_at: now,
+      updated_at: now,
+    })
+    .eq("id", version.session_id)
+
+  if (sessionError && !isMissingInitializationTableError(sessionError.message)) {
+    throw new Error(sessionError.message)
+  }
+}
+
+function isMissingInitializationTableError(message: string) {
+  return (
+    (message.includes("agent_initialization_sessions") ||
+      message.includes("agent_initialization_versions")) &&
+    (message.includes("schema cache") || message.includes("does not exist"))
+  )
 }

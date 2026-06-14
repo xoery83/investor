@@ -2,6 +2,7 @@ import type {
   Agent,
   AgentHolding,
   AgentInvestmentUniverse,
+  AgentMemoryCard,
   AgentProfile,
   AgentRun,
   AgentValuation,
@@ -9,6 +10,7 @@ import type {
   WorkflowConfig,
 } from "../types/agent"
 import { getUniverseSymbols } from "./investment-universe"
+import { formatMemoryCardsForPrompt } from "./memory-cards"
 
 type BuildInitialPortfolioPromptInput = {
   agent: Agent
@@ -19,6 +21,7 @@ type BuildInitialPortfolioPromptInput = {
   riskPolicy?: RiskPolicy
   workflowConfig?: WorkflowConfig
   universe?: AgentInvestmentUniverse | null
+  memoryCards?: AgentMemoryCard[]
 }
 
 export function buildInitialPortfolioPrompt({
@@ -30,6 +33,7 @@ export function buildInitialPortfolioPrompt({
   riskPolicy,
   workflowConfig,
   universe,
+  memoryCards = [],
 }: BuildInitialPortfolioPromptInput) {
   const totalValue = Number(agent.current_value || agent.initial_capital || 0)
   const cashValue = Number(agent.cash_balance || totalValue)
@@ -59,6 +63,7 @@ export function buildInitialPortfolioPrompt({
           .map((run) => `- ${run.created_at}: ${run.summary || "No summary"}`)
           .join("\n")
       : "No previous runs."
+  const memoryCardsText = formatMemoryCardsForPrompt(memoryCards)
 
   return `
 You are constructing a portfolio for an AI investment simulation agent.
@@ -119,6 +124,13 @@ Recent context:
 - Latest valuation: ${latestValuation ? JSON.stringify(latestValuation) : "No valuation history yet."}
 - Recent runs:
 ${recentRunsText}
+- Long-term memory cards:
+${memoryCardsText}
+
+Memory rules:
+- Respect active long-term memory cards unless they conflict with current risk policy or target market constraints.
+- If a user preference memory asks for a new symbol or changed cash target, incorporate it only when it passes risk and universe validation.
+- If a memory card conflicts with risk policy, keep the proposal risk-valid and explain the conflict in self_critique.
 
 Return ONLY valid JSON with this shape:
 {
@@ -127,6 +139,34 @@ Return ONLY valid JSON with this shape:
   "summary": "short sentence",
   "market_summary": "brief market context",
   "portfolio_diagnosis": "why this starting allocation fits the agent",
+  "investment_thesis": {
+    "why_this_portfolio_exists": "clear explanation of the portfolio construction logic",
+    "core_themes": ["theme 1", "theme 2"],
+    "portfolio_role_by_bucket": [
+      { "bucket": "core ETF | growth stock | defensive asset | cash", "role": "why this bucket exists" }
+    ]
+  },
+  "self_critique": {
+    "potential_concerns": [
+      {
+        "concern": "specific weakness or unresolved question",
+        "severity": "low | medium | high",
+        "possible_adjustment": "how a user could challenge or change this part of the portfolio"
+      }
+    ],
+    "questions_for_user": ["question that would improve the proposal"]
+  },
+  "sector_exposure": [
+    { "sector": "sector name", "target_weight": 30, "rationale": "why this sector exposure exists" }
+  ],
+  "historical_reference": {
+    "status": "available | unavailable",
+    "period": "1Y | 3Y | 5Y | unavailable",
+    "estimated_annualized_return": null,
+    "estimated_max_drawdown": null,
+    "benchmark": "benchmark symbol or unavailable",
+    "notes": "Only provide numeric values if historical price data was available in the supplied context; otherwise explain what data is needed."
+  },
   "target_allocation": [
     { "symbol": "CASH", "target_weight": 10, "asset_type": "cash" },
     { "symbol": "SYMBOL", "target_weight": 15, "asset_type": "etf or stock" }
@@ -157,5 +197,8 @@ Allocation rules:
 - Do not put CASH in suggested_actions.
 - Keep each stock and ETF inside its risk limit.
 - Prefer diversified exposure over one or two concentrated names.
+- investment_thesis is mandatory and should explain the portfolio like an investment committee memo.
+- self_critique is mandatory and should honestly point out weaknesses, missing assets, concentration, liquidity, currency, or market-scope concerns.
+- historical_reference is mandatory, but do not fabricate historical returns. If no historical price series is supplied, set status to "unavailable" and explain that a historical quote service is required.
 `
 }

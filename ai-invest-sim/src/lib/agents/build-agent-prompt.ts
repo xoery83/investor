@@ -5,10 +5,12 @@ import {
   AgentValuation,
   AgentProfile,
   AgentInvestmentUniverse,
+  AgentMemoryCard,
   RiskPolicy,
   WorkflowConfig,
 } from "../types/agent"
 import type { PortfolioDiagnostic } from "./diagnose-portfolio"
+import { formatMemoryCardsForPrompt } from "./memory-cards"
   
   type BuildAgentPromptInput = {
     agent: Agent
@@ -20,6 +22,7 @@ import type { PortfolioDiagnostic } from "./diagnose-portfolio"
     workflowConfig?: WorkflowConfig
     diagnostic?: PortfolioDiagnostic
     universe?: AgentInvestmentUniverse | null
+    memoryCards?: AgentMemoryCard[]
   }
   
   export function buildAgentPrompt({
@@ -32,6 +35,7 @@ import type { PortfolioDiagnostic } from "./diagnose-portfolio"
     workflowConfig,
     diagnostic,
     universe,
+    memoryCards = [],
   }: BuildAgentPromptInput) {
     const holdingsText =
       holdings.length > 0
@@ -63,6 +67,7 @@ import type { PortfolioDiagnostic } from "./diagnose-portfolio"
             )
             .join("\n")
         : "No previous agent runs."
+    const memoryCardsText = formatMemoryCardsForPrompt(memoryCards)
 
     const profileText = profile
       ? `
@@ -168,6 +173,9 @@ ${holdings.reduce(
   
   Recent Agent Memory:
   ${recentRunsText}
+
+  Long-Term Agent Memory Cards:
+  ${memoryCardsText}
   
   Your task:
   Generate today's portfolio recommendation based on the agent's philosophy, structured profile, risk policy, current holdings, valuation history, and recent memory.
@@ -183,6 +191,8 @@ ${holdings.reduce(
   - Avoid unnecessary trading.
   - If there are no holdings, propose a reasonable starting allocation.
   - Explain why your recommendation is consistent with previous agent behavior.
+  - Respect active long-term memory cards unless they conflict with current risk policy or target market constraints.
+  - If a memory card conflicts with risk policy, explicitly explain the conflict and prioritize risk policy.
   - Keep actions realistic for a simulated long-term portfolio.
   - Target allocation must include CASH and must sum to 100%.
   - CASH is an allocation target, not a buy/sell action. Do not include CASH inside suggested_actions.

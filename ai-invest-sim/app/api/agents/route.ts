@@ -11,6 +11,7 @@ import {
   canActivateMoreAgents,
   canCreateMoreAgents,
 } from "../../../src/lib/auth/permissions"
+import { DEFAULT_AGENT_MODEL } from "../../../src/lib/agents/model-options"
 import { getRequestUser } from "../../../src/lib/auth/server"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -104,11 +105,14 @@ export async function POST(request: Request) {
     initial_capital,
     base_currency,
     rebalance_frequency,
+    model_name,
     profile,
     risk_policy,
     workflow_config,
     visibility,
     lifecycle_status,
+    agent_mode,
+    copycat_source_id,
   } = body
 
   if (!name || !initial_capital) {
@@ -163,6 +167,51 @@ export async function POST(request: Request) {
   const resolvedBaseCurrency = String(base_currency || "USD")
     .trim()
     .toUpperCase()
+  const resolvedAgentMode =
+    agent_mode === "copycat" ? "copycat" : "ai_manager"
+
+  if (resolvedAgentMode === "copycat") {
+    if (requestUser.profile.role !== "admin") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Copycat agents are admin-only in this phase.",
+        },
+        { status: 403 }
+      )
+    }
+
+    if (!copycat_source_id) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Copycat source is required for copycat agents.",
+        },
+        { status: 400 }
+      )
+    }
+
+    const { data: copycatSource, error: copycatSourceError } = await supabase
+      .from("copycat_sources")
+      .select("id,status")
+      .eq("id", copycat_source_id)
+      .single()
+
+    if (copycatSourceError || !copycatSource) {
+      return NextResponse.json(
+        { success: false, error: "Copycat source not found." },
+        { status: 404 }
+      )
+    }
+
+    if (copycatSource.status !== "active") {
+      return NextResponse.json(
+        { success: false, error: "Copycat source is not active." },
+        { status: 400 }
+      )
+    }
+  }
+
   const resolvedLifecycleStatus =
     lifecycle_status === "active" || !lifecycle_status
       ? activePermission.allowed
@@ -188,7 +237,11 @@ export async function POST(request: Request) {
       cash_balance: initial_capital,
       current_value: initial_capital,
       base_currency: resolvedBaseCurrency,
+      agent_mode: resolvedAgentMode,
+      copycat_source_id:
+        resolvedAgentMode === "copycat" ? copycat_source_id : null,
       rebalance_frequency: rebalance_frequency || "daily",
+      model_name: model_name || DEFAULT_AGENT_MODEL,
       is_active: resolvedLifecycleStatus === "active",
     })
     .select()

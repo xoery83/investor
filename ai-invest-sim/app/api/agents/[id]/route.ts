@@ -95,6 +95,7 @@ export async function GET(
     runsResult,
     valuationsResult,
     tradeProposalsResult,
+    initializationSession,
     profile,
     riskPolicy,
     workflowConfig,
@@ -123,10 +124,11 @@ export async function GET(
       .limit(2000),
     supabase
       .from("trade_proposals")
-      .select("*, validator_results(*)")
+      .select("*, validator_results(*), portfolio_evaluations(*)")
       .eq("agent_id", id)
       .order("created_at", { ascending: false })
       .limit(5),
+    loadInitializationSession(id),
     getAgentProfile(id),
     getRiskPolicy(id),
     getWorkflowConfig(id),
@@ -196,6 +198,7 @@ export async function GET(
     runs,
     valuations,
     trade_proposals: tradeProposals,
+    initialization_session: initializationSession,
     profile,
     risk_policy: riskPolicy,
     workflow_config: workflowConfig,
@@ -325,6 +328,66 @@ async function getInvestmentUniverse(
   return data as AgentInvestmentUniverse
 }
 
+async function loadInitializationSession(agentId: string) {
+  const { data: session, error } = await supabase
+    .from("agent_initialization_sessions")
+    .select("*")
+    .eq("agent_id", agentId)
+    .in("status", ["draft", "in_review", "approved"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    if (isMissingInitializationTableError(error.message)) return null
+    throw new Error(error.message)
+  }
+
+  if (!session) return null
+
+  const [versionsResult, messagesResult] = await Promise.all([
+    supabase
+      .from("agent_initialization_versions")
+      .select("*, trade_proposals(*, validator_results(*))")
+      .eq("session_id", session.id)
+      .order("version_number", { ascending: true }),
+    supabase
+      .from("agent_initialization_messages")
+      .select("*")
+      .eq("session_id", session.id)
+      .order("created_at", { ascending: true }),
+  ])
+
+  if (versionsResult.error) {
+    if (isMissingInitializationTableError(versionsResult.error.message)) {
+      return null
+    }
+    throw new Error(versionsResult.error.message)
+  }
+
+  if (messagesResult.error) {
+    if (isMissingInitializationTableError(messagesResult.error.message)) {
+      return null
+    }
+    throw new Error(messagesResult.error.message)
+  }
+
+  return {
+    ...session,
+    versions: versionsResult.data || [],
+    messages: messagesResult.data || [],
+  }
+}
+
+function isMissingInitializationTableError(message: string) {
+  return (
+    (message.includes("agent_initialization_sessions") ||
+      message.includes("agent_initialization_versions") ||
+      message.includes("agent_initialization_messages")) &&
+    (message.includes("schema cache") || message.includes("does not exist"))
+  )
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -353,6 +416,8 @@ export async function PATCH(
     lifecycle_status,
     manual_trade_allowed,
     proposal_execution_required,
+    agent_mode,
+    copycat_source_id,
     profile,
     risk_policy,
     workflow_config,
@@ -392,6 +457,56 @@ export async function PATCH(
   )
     .trim()
     .toUpperCase()
+  const resolvedAgentMode =
+    agent_mode === "copycat" ? "copycat" : "ai_manager"
+
+  if (
+    resolvedAgentMode !== (existingAgent.agent_mode || "ai_manager") &&
+    requestUser.profile.role !== "admin"
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Only admins can change agent mode in this phase.",
+      },
+      { status: 403 }
+    )
+  }
+
+  if (resolvedAgentMode === "copycat") {
+    const resolvedCopycatSourceId =
+      copycat_source_id || existingAgent.copycat_source_id
+
+    if (!resolvedCopycatSourceId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Copycat source is required for copycat agents.",
+        },
+        { status: 400 }
+      )
+    }
+
+    const { data: copycatSource, error: copycatSourceError } = await supabase
+      .from("copycat_sources")
+      .select("id,status")
+      .eq("id", resolvedCopycatSourceId)
+      .single()
+
+    if (copycatSourceError || !copycatSource) {
+      return NextResponse.json(
+        { success: false, error: "Copycat source not found." },
+        { status: 404 }
+      )
+    }
+
+    if (copycatSource.status !== "active") {
+      return NextResponse.json(
+        { success: false, error: "Copycat source is not active." },
+        { status: 400 }
+      )
+    }
+  }
 
   if (resolvedBaseCurrency !== String(existingAgent.base_currency || "USD")) {
     const { count: holdingsCount, error: holdingsCountError } = await supabase
@@ -487,6 +602,11 @@ export async function PATCH(
       rebalance_frequency,
       model_name,
       base_currency: resolvedBaseCurrency,
+      agent_mode: resolvedAgentMode,
+      copycat_source_id:
+        resolvedAgentMode === "copycat"
+          ? copycat_source_id || existingAgent.copycat_source_id
+          : null,
       visibility: resolvedVisibility,
       lifecycle_status: resolvedLifecycleStatus,
       is_active: resolvedLifecycleStatus === "active",

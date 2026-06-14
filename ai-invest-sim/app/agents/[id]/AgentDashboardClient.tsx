@@ -14,9 +14,11 @@ import { supabase } from "../../../src/lib/supabase"
 import type {
   Agent,
   AgentHolding,
+  AgentInitializationSession,
   AgentProfile,
   AgentRun,
   AgentValuation,
+  PortfolioEvaluation,
   RiskPolicy,
   TradeProposalWithValidation,
   WorkflowConfig,
@@ -40,6 +42,7 @@ type AgentDashboardClientProps = {
   runs: AgentRun[]
   valuations: AgentValuation[]
   tradeProposals: TradeProposalWithValidation[]
+  initializationSession?: AgentInitializationSession | null
   profile: AgentProfile
   riskPolicy: RiskPolicy
   workflowConfig: WorkflowConfig
@@ -54,6 +57,7 @@ export default function AgentDashboardClient({
   runs,
   valuations,
   tradeProposals,
+  initializationSession,
   profile,
   riskPolicy,
   workflowConfig,
@@ -74,14 +78,21 @@ export default function AgentDashboardClient({
   const [currentRuns, setCurrentRuns] = React.useState(runs)
   const [currentTradeProposals, setCurrentTradeProposals] =
     React.useState(tradeProposals)
+  const [currentInitializationSession, setCurrentInitializationSession] =
+    React.useState<AgentInitializationSession | null>(
+      initializationSession || null
+    )
   const [appliedProposalIds, setAppliedProposalIds] = React.useState<Set<string>>(
     () => new Set()
   )
+  const [pendingRunType, setPendingRunType] =
+    React.useState<AgentRun["run_type"] | null>(null)
   const [tradeDraft, setTradeDraft] = React.useState<TradeDraft | null>(null)
   const [configTab, setConfigTab] = React.useState<
     "profile" | "workflow" | null
   >(null)
   const tradeSectionRef = React.useRef<HTMLDivElement | null>(null)
+  const proposalScrollerRef = React.useRef<HTMLDivElement | null>(null)
   const baseCurrency = agent.base_currency || "USD"
   const initialMarketValue = Number(agent.initial_capital || 0)
   const followerPositionValue = Number(agent.follower_position_value || 0)
@@ -143,19 +154,49 @@ export default function AgentDashboardClient({
   function handleRunCompleted(payload: {
     run?: unknown
     trade_proposal?: unknown
+    evaluation?: unknown
+    initialization?: unknown
   }) {
     if (payload.run) {
       setCurrentRuns((previous) => [payload.run as AgentRun, ...previous])
     }
 
     if (payload.trade_proposal) {
+      const nextProposal = payload.trade_proposal as TradeProposalWithValidation
+      const evaluation = isPortfolioEvaluation(payload.evaluation)
+        ? payload.evaluation
+        : null
       setCurrentTradeProposals((previous) => [
-        payload.trade_proposal as TradeProposalWithValidation,
+        evaluation
+          ? {
+              ...nextProposal,
+              portfolio_evaluations: [
+                evaluation,
+                ...(nextProposal.portfolio_evaluations || []),
+              ],
+            }
+          : nextProposal,
         ...previous,
       ])
     }
 
+    if (payload.initialization) {
+      const initialization = payload.initialization as {
+        session?: AgentInitializationSession
+      }
+      if (initialization.session) {
+        setCurrentInitializationSession(initialization.session)
+      }
+    }
+
     clearAgentDetailCache(agent.id)
+    window.setTimeout(() => {
+      proposalScrollerRef.current?.scrollTo({ left: 0, behavior: "smooth" })
+      tradeSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    }, 0)
   }
 
   function loadHoldingIntoTradeForm(holding: UpdatedHolding) {
@@ -214,7 +255,21 @@ export default function AgentDashboardClient({
               <RunAgentButton
                 agentId={agent.id}
                 initialBuildMode={initialBuildMode}
+                onRunStarted={(runType) => {
+                  setPendingRunType(runType)
+                  window.setTimeout(() => {
+                    tradeSectionRef.current?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    })
+                    proposalScrollerRef.current?.scrollTo({
+                      left: 0,
+                      behavior: "smooth",
+                    })
+                  }, 0)
+                }}
                 onRunCompleted={handleRunCompleted}
+                onRunFinished={() => setPendingRunType(null)}
               />
             )}
 
@@ -390,10 +445,14 @@ export default function AgentDashboardClient({
             </div>
           </div>
 
-          {sortedTradeProposals.length === 0 ? (
-            <p className="text-slate-500">No trade proposals yet. Run the agent to generate one.</p>
-          ) : (
-            <div className="flex snap-x gap-4 overflow-x-auto pb-2">
+          {pendingRunType ? (
+            <div
+              ref={proposalScrollerRef}
+              className="flex snap-x gap-4 overflow-x-auto pb-2"
+            >
+              <div className="min-w-full snap-start">
+                <ProposalPendingCard runType={pendingRunType} />
+              </div>
               {sortedTradeProposals.map((proposal) => (
                 <div key={proposal.id} className="min-w-full snap-start">
                   <TradeProposalCard
@@ -402,8 +461,111 @@ export default function AgentDashboardClient({
                     totalValue={summary.total_value}
                     holdings={currentHoldings}
                     canApplyProposal={permissions.canTrade || permissions.canEdit}
+                    initializationSession={currentInitializationSession}
                     applied={appliedProposalIds.has(proposal.id)}
                     onUseAction={loadTradeDraft}
+                    onProposalRevised={(payload) => {
+                      if (payload.trade_proposal) {
+                        const nextProposal =
+                          payload.trade_proposal as TradeProposalWithValidation
+                        const evaluation = isPortfolioEvaluation(
+                          payload.evaluation
+                        )
+                          ? payload.evaluation
+                          : null
+                        setCurrentTradeProposals((previous) => [
+                          evaluation
+                            ? {
+                                ...nextProposal,
+                                portfolio_evaluations: [
+                                  evaluation,
+                                  ...(nextProposal.portfolio_evaluations || []),
+                                ],
+                              }
+                            : nextProposal,
+                          ...previous,
+                        ])
+                      }
+                      if (payload.initialization?.session) {
+                        setCurrentInitializationSession(
+                          payload.initialization.session
+                        )
+                      }
+                      window.setTimeout(() => {
+                        proposalScrollerRef.current?.scrollTo({
+                          left: 0,
+                          behavior: "smooth",
+                        })
+                      }, 0)
+                    }}
+                    onProposalApplied={(payload) =>
+                      handleInitialBuildApplied(proposal.id, payload)
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          ) : sortedTradeProposals.length === 0 ? (
+            <p className="text-slate-500">No trade proposals yet. Run the agent to generate one.</p>
+          ) : (
+            <div
+              ref={proposalScrollerRef}
+              className="flex snap-x gap-4 overflow-x-auto pb-2"
+            >
+              {sortedTradeProposals.map((proposal) => (
+                <div key={proposal.id} className="min-w-full snap-start">
+                  <TradeProposalCard
+                    proposal={proposal}
+                    agentId={agent.id}
+                    totalValue={summary.total_value}
+                    holdings={currentHoldings}
+                    canApplyProposal={permissions.canTrade || permissions.canEdit}
+                    initializationSession={currentInitializationSession}
+                    applied={appliedProposalIds.has(proposal.id)}
+                    onUseAction={loadTradeDraft}
+                    onProposalRevised={(payload) => {
+                      if (payload.trade_proposal) {
+                        const nextProposal =
+                          payload.trade_proposal as TradeProposalWithValidation
+                        const evaluation = isPortfolioEvaluation(
+                          payload.evaluation
+                        )
+                          ? payload.evaluation
+                          : null
+                        setCurrentTradeProposals((previous) => [
+                          evaluation
+                            ? {
+                                ...nextProposal,
+                                portfolio_evaluations: [
+                                  evaluation,
+                                  ...(nextProposal.portfolio_evaluations || []),
+                                ],
+                              }
+                            : nextProposal,
+                          ...previous,
+                        ])
+                      }
+                      if (payload.initialization?.session) {
+                        setCurrentInitializationSession(
+                          payload.initialization.session
+                        )
+                      }
+                      if (payload.run) {
+                        setCurrentRuns((previous) => [
+                          payload.run as AgentRun,
+                          ...previous,
+                        ])
+                      }
+                      clearAgentDetailCache(agent.id)
+                    }}
+                    onProposalUpdated={(updatedProposal) => {
+                      setCurrentTradeProposals((previous) =>
+                        previous.map((item) =>
+                          item.id === updatedProposal.id ? updatedProposal : item
+                        )
+                      )
+                      clearAgentDetailCache(agent.id)
+                    }}
                     onProposalApplied={(payload) =>
                       handleInitialBuildApplied(proposal.id, payload)
                     }
@@ -647,8 +809,11 @@ function TradeProposalCard({
   totalValue,
   holdings,
   canApplyProposal,
+  initializationSession,
   applied,
   onUseAction,
+  onProposalRevised,
+  onProposalUpdated,
   onProposalApplied,
 }: {
   proposal: TradeProposalWithValidation
@@ -656,25 +821,52 @@ function TradeProposalCard({
   totalValue: number
   holdings: UpdatedHolding[]
   canApplyProposal?: boolean
+  initializationSession?: AgentInitializationSession | null
   applied?: boolean
   onUseAction?: (draft: Omit<TradeDraft, "key">) => void
+  onProposalRevised?: (payload: {
+    run?: unknown
+    trade_proposal?: unknown
+    evaluation?: unknown
+    initialization?: { session?: AgentInitializationSession }
+  }) => void
+  onProposalUpdated?: (proposal: TradeProposalWithValidation) => void
   onProposalApplied?: (
     payload: PortfolioSummary & { holdings: UpdatedHolding[] }
   ) => void
 }) {
   const [buildLoading, setBuildLoading] = React.useState(false)
   const [buildError, setBuildError] = React.useState("")
+  const [question, setQuestion] = React.useState("")
+  const [discussionMessages, setDiscussionMessages] = React.useState<
+    Array<{ role: "user" | "assistant"; content: string }>
+  >([])
+  const [discussionLoading, setDiscussionLoading] = React.useState(false)
+  const [discussionError, setDiscussionError] = React.useState("")
+  const [universeLoading, setUniverseLoading] = React.useState(false)
+  const [universeMessage, setUniverseMessage] = React.useState("")
+  const [universeError, setUniverseError] = React.useState("")
   const proposalBody = isRecord(proposal.proposal) ? proposal.proposal : {}
   const validation = proposal.validator_results?.[0]
   const violations = Array.isArray(validation?.violations)
     ? validation.violations.map(String)
     : []
+  const outOfUniverseSymbols = readOutOfUniverseSymbols(violations)
   const validationResult = isRecord(validation?.result) ? validation.result : {}
   const residualPolicyGaps = Array.isArray(validationResult.residual_policy_gaps)
     ? validationResult.residual_policy_gaps.map(String)
     : []
   const actions = readActions(proposalBody.suggested_actions)
   const allocations = readAllocations(proposalBody.target_allocation)
+  const thesis = readInvestmentThesis(proposalBody.investment_thesis)
+  const critique = readSelfCritique(proposalBody.self_critique)
+  const sectorExposure = readSectorExposure(proposalBody.sector_exposure)
+  const historicalReference = readHistoricalReference(
+    proposalBody.historical_reference
+  )
+  const portfolioEvaluation = readLatestPortfolioEvaluation(
+    proposal.portfolio_evaluations
+  )
   const executableActions = actions.filter(
     (action) =>
       (action.action === "buy" || action.action === "sell") &&
@@ -683,6 +875,32 @@ function TradeProposalCard({
   const isConstructionProposal =
     proposalBody.proposal_type === "initial_build" ||
     proposalBody.proposal_type === "capital_deployment"
+  const linkedInitializationVersion = initializationSession?.versions?.find(
+    (version) => version.trade_proposal_id === proposal.id
+  )
+  const canDiscussInitialization =
+    isConstructionProposal &&
+    initializationSession &&
+    (!initializationSession.versions?.length || linkedInitializationVersion)
+  const persistedDiscussionMessages =
+    initializationSession?.messages
+      ?.filter(
+        (message) =>
+          !linkedInitializationVersion ||
+          message.version_id === linkedInitializationVersion.id
+      )
+      .filter(
+        (message) =>
+          message.role === "user" || message.role === "assistant"
+      )
+      .map((message) => ({
+        role: message.role as "user" | "assistant",
+        content: message.content,
+      })) || []
+  const allDiscussionMessages = [
+    ...persistedDiscussionMessages,
+    ...discussionMessages,
+  ]
   const initialBuildBuyActions = executableActions.filter(
     (action) => action.action === "buy"
   )
@@ -750,6 +968,7 @@ function TradeProposalCard({
                   totalValue,
                   holdings,
                   actions: executableActions,
+                  allocations,
                   onComplete: onProposalApplied,
                   setLoading: setBuildLoading,
                   setError: setBuildError,
@@ -768,7 +987,7 @@ function TradeProposalCard({
                 : initialBuildAlreadyApplied || applied || proposalExecuted
                   ? "Proposal executed"
                   : isConstructionProposal
-                    ? "Build portfolio"
+                    ? "Approve & Execute"
                     : "Execute proposal"}
             </button>
             <p className="text-sm text-emerald-800">
@@ -783,6 +1002,244 @@ function TradeProposalCard({
         <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {buildError}
         </p>
+      )}
+
+      {(thesis.summary ||
+        thesis.coreThemes.length > 0 ||
+        critique.concerns.length > 0 ||
+        sectorExposure.length > 0) && (
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          <MemoPanel title="Investment Thesis">
+            {thesis.summary && (
+              <p className="text-sm leading-relaxed text-slate-600">
+                {thesis.summary}
+              </p>
+            )}
+            {thesis.coreThemes.length > 0 && (
+              <TagList values={thesis.coreThemes} />
+            )}
+            {thesis.buckets.length > 0 && (
+              <div className="space-y-2">
+                {thesis.buckets.map((bucket) => (
+                  <p key={bucket.bucket} className="text-xs text-slate-600">
+                    <span className="font-medium text-slate-800">
+                      {bucket.bucket}:
+                    </span>{" "}
+                    {bucket.role}
+                  </p>
+                ))}
+              </div>
+            )}
+          </MemoPanel>
+
+          <MemoPanel title="Self-Critique">
+            {critique.concerns.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                No explicit concerns returned.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {critique.concerns.map((concern, index) => (
+                  <div key={`${concern.concern}-${index}`}>
+                    <p className="text-sm leading-relaxed text-slate-700">
+                      {concern.concern}
+                    </p>
+                    {concern.possible_adjustment && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Adjustment: {concern.possible_adjustment}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {critique.questions.length > 0 && (
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-medium text-slate-500">
+                  Questions
+                </p>
+                <ul className="space-y-1 text-xs text-slate-600">
+                  {critique.questions.map((question) => (
+                    <li key={question}>- {question}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </MemoPanel>
+
+          <MemoPanel title="Sector Exposure">
+            {sectorExposure.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                No sector exposure returned.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {sectorExposure.map((sector) => (
+                  <div key={sector.sector}>
+                    <div className="mb-1 flex justify-between text-xs">
+                      <span>{sector.sector}</span>
+                      <span>{sector.target_weight}%</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-blue-100">
+                      <div
+                        className="h-full rounded-full bg-blue-500"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.max(0, sector.target_weight)
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    {sector.rationale && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        {sector.rationale}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </MemoPanel>
+        </div>
+      )}
+
+      {historicalReference.status && (
+        <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/25 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-800">
+              Historical Reference
+            </p>
+            <span className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs uppercase text-blue-700">
+              {historicalReference.status}
+            </span>
+          </div>
+          {historicalReference.status === "available" ? (
+            <div className="mt-2 grid gap-3 text-sm md:grid-cols-4">
+              <Metric label="Period" value={historicalReference.period || "--"} />
+              <Metric
+                label="Annualized Return"
+                value={
+                  typeof historicalReference.estimatedAnnualizedReturn ===
+                  "number"
+                    ? `${historicalReference.estimatedAnnualizedReturn.toFixed(2)}%`
+                    : "--"
+                }
+              />
+              <Metric
+                label="Max Drawdown"
+                value={
+                  typeof historicalReference.estimatedMaxDrawdown === "number"
+                    ? `${historicalReference.estimatedMaxDrawdown.toFixed(2)}%`
+                    : "--"
+                }
+              />
+              <Metric
+                label="Benchmark"
+                value={historicalReference.benchmark || "--"}
+              />
+            </div>
+          ) : (
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              {historicalReference.notes ||
+                "Historical return calculation requires a price-history data source."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {portfolioEvaluation && (
+        <PortfolioEvaluationPanel evaluation={portfolioEvaluation} />
+      )}
+
+      {canDiscussInitialization && initializationSession && (
+        <div className="mt-4 rounded-lg border border-blue-100 bg-white/70 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-slate-800">
+                Ask AI about this proposal
+              </p>
+              <p className="text-xs text-slate-500">
+                Challenge individual positions before approving execution.
+              </p>
+            </div>
+            <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+              V
+              {linkedInitializationVersion?.version_number ||
+                initializationSession.current_version ||
+                1}
+            </span>
+          </div>
+
+          {allDiscussionMessages.length > 0 && (
+            <div className="mb-3 space-y-2">
+              {allDiscussionMessages.map((message, index) => (
+                <div
+                  key={`${message.role}-${index}`}
+                  className={
+                    message.role === "user"
+                      ? "rounded-md bg-blue-50 p-2 text-sm text-slate-700"
+                      : "rounded-md bg-emerald-50 p-2 text-sm leading-relaxed text-slate-700"
+                  }
+                >
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    {message.role === "user" ? "You" : "AI"}
+                  </span>
+                  {message.content}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="Ask why a position is included, request less cash, or challenge an allocation..."
+              className="min-w-0 flex-1 rounded-md border border-blue-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                askInitializationQuestion({
+                  agentId,
+                  sessionId: initializationSession.id,
+                  question,
+                  setQuestion,
+                  setDiscussionMessages,
+                  setDiscussionLoading,
+                  setDiscussionError,
+                })
+              }
+              disabled={discussionLoading || !question.trim()}
+              className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-slate-200"
+            >
+              {discussionLoading ? "Asking..." : "Ask AI"}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                requestInitializationChanges({
+                  agentId,
+                  sessionId: initializationSession.id,
+                  feedback: question,
+                  setQuestion,
+                  setDiscussionMessages,
+                  setDiscussionLoading,
+                  setDiscussionError,
+                  onProposalRevised,
+                })
+              }
+              disabled={discussionLoading || !question.trim()}
+              className="rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              Request Changes
+            </button>
+          </div>
+          {discussionError && (
+            <p className="mt-2 text-xs text-red-600">{discussionError}</p>
+          )}
+        </div>
       )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -867,14 +1324,54 @@ function TradeProposalCard({
 
       {violations.length > 0 && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="mb-2 text-sm font-medium text-amber-800">
-            Risk Review Required
-          </p>
-          <ul className="space-y-1 text-sm text-amber-700">
-            {violations.map((violation) => (
-              <li key={violation}>- {violation}</li>
-            ))}
-          </ul>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="mb-2 text-sm font-medium text-amber-800">
+                Risk Review Required
+              </p>
+              <ul className="space-y-1 text-sm text-amber-700">
+                {violations.map((violation) => (
+                  <li key={violation}>- {violation}</li>
+                ))}
+              </ul>
+            </div>
+            {canDiscussInitialization &&
+              canApplyProposal &&
+              linkedInitializationVersion &&
+              outOfUniverseSymbols.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    expandUniverseAndRevalidate({
+                      agentId,
+                      sessionId: initializationSession.id,
+                      proposalId: proposal.id,
+                      symbols: outOfUniverseSymbols,
+                      setLoading: setUniverseLoading,
+                      setMessage: setUniverseMessage,
+                      setError: setUniverseError,
+                      onProposalUpdated,
+                    })
+                  }
+                  disabled={universeLoading}
+                  className="rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:text-slate-400"
+                >
+                  {universeLoading
+                    ? "Revalidating..."
+                    : `Add ${outOfUniverseSymbols.join(", ")} to universe`}
+                </button>
+              )}
+          </div>
+          {universeMessage && (
+            <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-700">
+              {universeMessage}
+            </p>
+          )}
+          {universeError && (
+            <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+              {universeError}
+            </p>
+          )}
         </div>
       )}
 
@@ -936,6 +1433,306 @@ function TradeProposalCard({
   )
 }
 
+function ProposalPendingCard({ runType }: { runType: string }) {
+  const steps = getRunProgressSteps(runType)
+
+  return (
+    <article className="rounded-xl border border-blue-300 bg-white p-6 shadow-sm shadow-blue-100/80">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-blue-700">
+            {formatRunType(runType)}
+          </p>
+          <h3 className="mt-1 text-lg font-semibold">
+            {getRunProgressTitle(runType)}
+          </h3>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">
+            {getRunProgressDescription(runType)}
+          </p>
+        </div>
+        <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-700">
+          <span className="h-3 w-3 animate-pulse rounded-full bg-blue-600" />
+          <span className="text-sm font-medium">Running</span>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        {steps.map((step, index) => (
+          <div
+            key={step.title}
+            className="rounded-lg border border-blue-100 bg-blue-50/45 p-3"
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className={
+                  index === 0
+                    ? "h-2.5 w-2.5 animate-pulse rounded-full bg-blue-600"
+                    : "h-2.5 w-2.5 rounded-full bg-blue-200"
+                }
+              />
+              <p className="text-sm font-medium text-slate-800">
+                {step.title}
+              </p>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">
+              {step.description}
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-xs text-slate-500">
+        You can keep this tab open. The newest result will slide into this
+        position automatically after model output, risk validation, and database
+        writes finish.
+      </p>
+    </article>
+  )
+}
+
+function getRunProgressTitle(runType: string) {
+  if (runType === "initial_build") return "Building initial portfolio..."
+  if (runType === "rebalance") return "Generating rebalance proposal..."
+  if (runType === "weekly") return "Running weekly deep research..."
+  if (runType === "escalation") return "Running escalation review..."
+  return "Running daily routine..."
+}
+
+function getRunProgressDescription(runType: string) {
+  if (runType === "initial_build") {
+    return "The agent is selecting a full starting allocation, checking overlap and risk policy, then preparing an approval-ready portfolio proposal."
+  }
+  if (runType === "rebalance") {
+    return "The agent is refreshing holdings, reading memory cards, evaluating current policy gaps, and creating a bounded rebalance proposal."
+  }
+  if (runType === "weekly") {
+    return "The agent is preparing a deeper research note with portfolio implications, risks, and watch-list updates."
+  }
+  if (runType === "escalation") {
+    return "The agent is investigating a higher-risk condition and preparing a risk-focused recommendation."
+  }
+  return "The agent is preparing a daily market and portfolio status update."
+}
+
+function getRunProgressSteps(runType: string) {
+  if (runType === "initial_build") {
+    return [
+      {
+        title: "Universe",
+        description: "Confirming target markets, allowed assets, and memory.",
+      },
+      {
+        title: "Allocation",
+        description: "Drafting target weights and construction thesis.",
+      },
+      {
+        title: "Risk",
+        description: "Checking cash, concentration, and overlap limits.",
+      },
+      {
+        title: "Save",
+        description: "Storing proposal, evaluation, and memory cards.",
+      },
+    ]
+  }
+
+  if (runType === "rebalance") {
+    return [
+      {
+        title: "Refresh",
+        description: "Reading current holdings, quotes, and cash state.",
+      },
+      {
+        title: "Reason",
+        description: "Comparing current portfolio with target policy.",
+      },
+      {
+        title: "Validate",
+        description: "Running proposal through risk constraints.",
+      },
+      {
+        title: "Publish",
+        description: "Writing the latest trade proposal to the dashboard.",
+      },
+    ]
+  }
+
+  if (runType === "weekly") {
+    return [
+      {
+        title: "Market",
+        description: "Building weekly macro and sector context.",
+      },
+      {
+        title: "Holdings",
+        description: "Reviewing position-level implications.",
+      },
+      {
+        title: "Risks",
+        description: "Updating risks, watch items, and thesis drift.",
+      },
+      {
+        title: "Research",
+        description: "Saving the weekly research run.",
+      },
+    ]
+  }
+
+  if (runType === "escalation") {
+    return [
+      {
+        title: "Trigger",
+        description: "Reading the escalation condition.",
+      },
+      {
+        title: "Stress",
+        description: "Testing risk scenarios and policy breaches.",
+      },
+      {
+        title: "Action",
+        description: "Preparing manual or automated next steps.",
+      },
+      {
+        title: "Log",
+        description: "Saving the escalation review.",
+      },
+    ]
+  }
+
+  return [
+    {
+      title: "Quotes",
+      description: "Refreshing market and portfolio context.",
+    },
+    {
+      title: "Summary",
+      description: "Preparing daily market and portfolio notes.",
+    },
+    {
+      title: "Risks",
+      description: "Checking for risk-policy drift.",
+    },
+    {
+      title: "Log",
+      description: "Saving the daily routine result.",
+    },
+  ]
+}
+
+function MemoPanel({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border border-blue-100 bg-blue-50/25 p-3">
+      <p className="mb-2 text-sm font-medium text-slate-800">{title}</p>
+      {children}
+    </div>
+  )
+}
+
+function TagList({ values }: { values: string[] }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {values.map((value) => (
+        <span
+          key={value}
+          className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs text-blue-700"
+        >
+          {value}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-blue-100 bg-white/70 p-3">
+      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-800">{value}</p>
+    </div>
+  )
+}
+
+function PortfolioEvaluationPanel({
+  evaluation,
+}: {
+  evaluation: PortfolioEvaluation
+}) {
+  const warnings = readEvaluationWarnings(evaluation.overlap_warnings)
+  const metrics = isRecord(evaluation.metrics) ? evaluation.metrics : {}
+  const score =
+    typeof evaluation.target_fit_score === "number"
+      ? evaluation.target_fit_score
+      : null
+  const probability =
+    typeof evaluation.target_return_probability === "number"
+      ? evaluation.target_return_probability
+      : null
+
+  return (
+    <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/25 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-slate-800">
+          Portfolio Evaluation
+        </p>
+        <span className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs uppercase text-blue-700">
+          {evaluation.source || "local"}
+        </span>
+      </div>
+      <div className="mt-2 grid gap-3 text-sm md:grid-cols-4">
+        <Metric
+          label="Fit Score"
+          value={score === null ? "--" : `${score}/100`}
+        />
+        <Metric
+          label="Target Fit Estimate"
+          value={probability === null ? "--" : `${Math.round(probability * 100)}%`}
+        />
+        <Metric
+          label="Cash"
+          value={
+            typeof metrics.cash_weight === "number"
+              ? `${metrics.cash_weight.toFixed(2)}%`
+              : "--"
+          }
+        />
+        <Metric
+          label="Largest Exposure"
+          value={
+            typeof metrics.largest_effective_exposure === "number"
+              ? `${metrics.largest_effective_exposure.toFixed(2)}%`
+              : "--"
+          }
+        />
+      </div>
+      {evaluation.summary && (
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">
+          {evaluation.summary}
+        </p>
+      )}
+      {warnings.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {warnings.slice(0, 4).map((warning, index) => (
+            <p
+              key={`${warning.type}-${index}`}
+              className={
+                warning.severity === "high"
+                  ? "rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700"
+                  : "rounded-md border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800"
+              }
+            >
+              {warning.message}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 type ProposalAction = ReturnType<typeof readActions>[number]
 
 async function applyTradeProposal({
@@ -944,6 +1741,7 @@ async function applyTradeProposal({
   totalValue,
   holdings,
   actions,
+  allocations,
   onComplete,
   setLoading,
   setError,
@@ -953,6 +1751,7 @@ async function applyTradeProposal({
   totalValue: number
   holdings: UpdatedHolding[]
   actions: ProposalAction[]
+  allocations: ReturnType<typeof readAllocations>
   onComplete?: (payload: PortfolioSummary & { holdings: UpdatedHolding[] }) => void
   setLoading: (loading: boolean) => void
   setError: (error: string) => void
@@ -986,10 +1785,11 @@ async function applyTradeProposal({
         throw new Error(`No usable market price for ${action.symbol}.`)
       }
 
-      const tradePct = Math.abs(
-        Number(action.estimated_portfolio_pct_change || 0) ||
-          Number(action.target_weight || 0) - Number(action.current_weight || 0)
-      )
+      const tradePct = resolveTradePct({
+        action,
+        allocations,
+        holdings,
+      })
       const tradeAmount = totalValue > 0 ? (tradePct / 100) * totalValue : 0
 
       if (tradeAmount <= 0) continue
@@ -1084,6 +1884,246 @@ async function markProposalExecuted({
   }
 }
 
+async function askInitializationQuestion({
+  agentId,
+  sessionId,
+  question,
+  setQuestion,
+  setDiscussionMessages,
+  setDiscussionLoading,
+  setDiscussionError,
+}: {
+  agentId: string
+  sessionId: string
+  question: string
+  setQuestion: (question: string) => void
+  setDiscussionMessages: React.Dispatch<
+    React.SetStateAction<Array<{ role: "user" | "assistant"; content: string }>>
+  >
+  setDiscussionLoading: (loading: boolean) => void
+  setDiscussionError: (error: string) => void
+}) {
+  const trimmedQuestion = question.trim()
+  if (!trimmedQuestion) return
+
+  setDiscussionLoading(true)
+  setDiscussionError("")
+  setDiscussionMessages((previous) => [
+    ...previous,
+    { role: "user", content: trimmedQuestion },
+  ])
+  setQuestion("")
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      throw new Error("Please log in before asking the agent.")
+    }
+
+    const res = await fetch(
+      `/api/agents/${agentId}/initialization/${sessionId}/ask`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ question: trimmedQuestion }),
+      }
+    )
+    const data = await res.json()
+
+    if (!data.success) {
+      throw new Error(data.error || "Failed to ask AI.")
+    }
+
+    setDiscussionMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content: String(data.assistant_message?.content || ""),
+      },
+    ])
+  } catch (error) {
+    setDiscussionError(
+      error instanceof Error ? error.message : "Failed to ask AI."
+    )
+  } finally {
+    setDiscussionLoading(false)
+  }
+}
+
+async function requestInitializationChanges({
+  agentId,
+  sessionId,
+  feedback,
+  setQuestion,
+  setDiscussionMessages,
+  setDiscussionLoading,
+  setDiscussionError,
+  onProposalRevised,
+}: {
+  agentId: string
+  sessionId: string
+  feedback: string
+  setQuestion: (question: string) => void
+  setDiscussionMessages: React.Dispatch<
+    React.SetStateAction<Array<{ role: "user" | "assistant"; content: string }>>
+  >
+  setDiscussionLoading: (loading: boolean) => void
+  setDiscussionError: (error: string) => void
+  onProposalRevised?: (payload: {
+    run?: unknown
+    trade_proposal?: unknown
+    evaluation?: unknown
+    initialization?: { session?: AgentInitializationSession }
+  }) => void
+}) {
+  const trimmedFeedback = feedback.trim()
+  if (!trimmedFeedback) return
+
+  setDiscussionLoading(true)
+  setDiscussionError("")
+  setDiscussionMessages((previous) => [
+    ...previous,
+    { role: "user", content: `Change request: ${trimmedFeedback}` },
+  ])
+  setQuestion("")
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      throw new Error("Please log in before revising the proposal.")
+    }
+
+    const res = await fetch(
+      `/api/agents/${agentId}/initialization/${sessionId}/revise`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ feedback: trimmedFeedback }),
+      }
+    )
+    const data = await res.json()
+
+    if (!data.success) {
+      throw new Error(data.error || "Failed to revise proposal.")
+    }
+
+    setDiscussionMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content:
+          "A revised proposal has been generated and added as the latest version above.",
+      },
+    ])
+    onProposalRevised?.({
+      run: data.run,
+      trade_proposal: data.trade_proposal,
+      evaluation: data.evaluation,
+      initialization: data.initialization,
+    })
+  } catch (error) {
+    setDiscussionError(
+      error instanceof Error ? error.message : "Failed to revise proposal."
+    )
+  } finally {
+    setDiscussionLoading(false)
+  }
+}
+
+async function expandUniverseAndRevalidate({
+  agentId,
+  sessionId,
+  proposalId,
+  symbols,
+  setLoading,
+  setMessage,
+  setError,
+  onProposalUpdated,
+}: {
+  agentId: string
+  sessionId: string
+  proposalId: string
+  symbols: string[]
+  setLoading: (loading: boolean) => void
+  setMessage: (message: string) => void
+  setError: (error: string) => void
+  onProposalUpdated?: (proposal: TradeProposalWithValidation) => void
+}) {
+  setLoading(true)
+  setMessage("")
+  setError("")
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      throw new Error("Please log in before expanding the universe.")
+    }
+
+    const res = await fetch(
+      `/api/agents/${agentId}/initialization/${sessionId}/expand-universe`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          proposal_id: proposalId,
+          symbols,
+        }),
+      }
+    )
+    const data = await res.json()
+
+    if (!data.success) {
+      throw new Error(data.error || "Failed to expand investment universe.")
+    }
+
+    if (data.trade_proposal) {
+      onProposalUpdated?.(data.trade_proposal as TradeProposalWithValidation)
+    }
+
+    setMessage(
+      `${(data.added_symbols || symbols).join(", ")} added to the agent universe. The proposal has been revalidated.`
+    )
+  } catch (error) {
+    setError(
+      error instanceof Error
+        ? error.message
+        : "Failed to expand investment universe."
+    )
+  } finally {
+    setLoading(false)
+  }
+}
+
+function readOutOfUniverseSymbols(violations: string[]) {
+  const prefix = "Symbols outside the configured target market were proposed:"
+  const symbols = violations.flatMap((violation) => {
+    if (!violation.startsWith(prefix)) return []
+    const rawSymbols = violation
+      .slice(prefix.length)
+      .replace(/\.$/, "")
+      .split(",")
+      .map((symbol) => symbol.trim().toUpperCase())
+      .filter(Boolean)
+    return rawSymbols
+  })
+  return Array.from(new Set(symbols))
+}
+
 function estimateSellQuantity({
   holding,
   tradePct,
@@ -1122,6 +2162,42 @@ function inferAssetType(quoteAssetType: string, fallback?: string) {
   if (quoteType.includes("crypto")) return "crypto"
   if (quoteType.includes("fund")) return "etf"
   return fallback || "stock"
+}
+
+function resolveTradePct({
+  action,
+  allocations,
+  holdings,
+}: {
+  action: ProposalAction
+  allocations: ReturnType<typeof readAllocations>
+  holdings: UpdatedHolding[]
+}) {
+  const explicitTradePct = Math.abs(
+    Number(action.estimated_portfolio_pct_change || 0)
+  )
+
+  if (explicitTradePct > 0) return explicitTradePct
+
+  const symbol = action.symbol.toUpperCase()
+  const allocationTarget = allocations.find(
+    (allocation) => allocation.symbol.toUpperCase() === symbol
+  )?.target_weight
+  const currentHoldingWeight = holdings.find(
+    (holding) => holding.symbol.toUpperCase() === symbol
+  )?.weight
+  const targetWeight = Number(
+    action.target_weight ?? allocationTarget ?? currentHoldingWeight ?? 0
+  )
+  const currentWeight = Number(
+    action.current_weight ?? currentHoldingWeight ?? 0
+  )
+
+  if (action.action === "sell") {
+    return Math.max(0, currentWeight - targetWeight)
+  }
+
+  return Math.max(0, targetWeight - currentWeight)
 }
 
 function clearAgentDetailCache(agentId: string) {
@@ -1287,6 +2363,107 @@ function readAllocations(value: unknown) {
       {
         symbol,
         target_weight: targetWeight,
+      },
+    ]
+  })
+}
+
+function readInvestmentThesis(value: unknown) {
+  const record = isRecord(value) ? value : {}
+  const buckets = readObjectList(record.portfolio_role_by_bucket).flatMap(
+    (item) => {
+      const bucket = readString(item.bucket, "")
+      const role = readString(item.role, "")
+      return bucket && role ? [{ bucket, role }] : []
+    }
+  )
+
+  return {
+    summary: readString(record.why_this_portfolio_exists, ""),
+    coreThemes: readStringList(record.core_themes),
+    buckets,
+  }
+}
+
+function readSelfCritique(value: unknown) {
+  const record = isRecord(value) ? value : {}
+  const concerns = readObjectList(record.potential_concerns).flatMap((item) => {
+    const concern = readString(item.concern, "")
+    if (!concern) return []
+
+    return [
+      {
+        concern,
+        severity: readString(item.severity, ""),
+        possible_adjustment: readString(item.possible_adjustment, ""),
+      },
+    ]
+  })
+
+  return {
+    concerns,
+    questions: readStringList(record.questions_for_user),
+  }
+}
+
+function readSectorExposure(value: unknown) {
+  return readObjectList(value).flatMap((item) => {
+    const sector = readString(item.sector, "")
+    const targetWeight = readNumber(item.target_weight)
+    if (!sector || typeof targetWeight !== "number") return []
+
+    return [
+      {
+        sector,
+        target_weight: targetWeight,
+        rationale: readString(item.rationale, ""),
+      },
+    ]
+  })
+}
+
+function readHistoricalReference(value: unknown) {
+  const record = isRecord(value) ? value : {}
+  const status = readString(record.status, "")
+
+  return {
+    status,
+    period: readString(record.period, ""),
+    estimatedAnnualizedReturn: readNumber(record.estimated_annualized_return),
+    estimatedMaxDrawdown: readNumber(record.estimated_max_drawdown),
+    benchmark: readString(record.benchmark, ""),
+    notes: readString(record.notes, ""),
+  }
+}
+
+function readLatestPortfolioEvaluation(
+  value: PortfolioEvaluation[] | undefined
+) {
+  if (!Array.isArray(value) || value.length === 0) return null
+  return [...value].sort(
+    (a, b) =>
+      new Date(b.created_at || "").getTime() -
+      new Date(a.created_at || "").getTime()
+  )[0]
+}
+
+function isPortfolioEvaluation(value: unknown): value is PortfolioEvaluation {
+  return (
+    isRecord(value) &&
+    typeof value.evaluation_scope === "string" &&
+    isRecord(value.metrics)
+  )
+}
+
+function readEvaluationWarnings(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return []
+    return [
+      {
+        type: readString(item.type, "warning"),
+        severity: readString(item.severity, "medium"),
+        message: readString(item.message, JSON.stringify(item)),
       },
     ]
   })

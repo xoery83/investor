@@ -11,6 +11,7 @@ import type {
   AgentValuation,
   AgentHolding,
   AgentRun,
+  AgentInitializationSession,
   AgentProfile,
   RiskPolicy,
   TradeProposalWithValidation,
@@ -39,6 +40,7 @@ type AgentDetailResponse = {
   runs: AgentRun[]
   valuations: AgentValuation[]
   trade_proposals: TradeProposalWithValidation[]
+  initialization_session?: AgentInitializationSession | null
   profile: AgentProfile
   risk_policy: RiskPolicy
   workflow_config: WorkflowConfig
@@ -87,7 +89,7 @@ export default function AgentDashboardPage() {
         cache: "no-store",
         headers,
       })
-      const payload = (await res.json()) as AgentDetailResponse
+      const payload = await readAgentDetailResponse(res)
 
       if (cancelled) return
 
@@ -134,6 +136,7 @@ export default function AgentDashboardPage() {
     runs,
     valuations,
     trade_proposals,
+    initialization_session,
     profile,
     risk_policy,
     workflow_config,
@@ -147,6 +150,7 @@ export default function AgentDashboardPage() {
       runs={runs}
       valuations={valuations}
       tradeProposals={trade_proposals}
+      initializationSession={initialization_session || null}
       profile={profile}
       riskPolicy={risk_policy}
       workflowConfig={workflow_config}
@@ -166,6 +170,28 @@ export default function AgentDashboardPage() {
       }}
     />
   )
+}
+
+async function readAgentDetailResponse(res: Response): Promise<AgentDetailResponse> {
+  const text = await res.text()
+
+  if (!text.trim()) {
+    return {
+      success: false,
+      error: res.ok ? "Empty agent response." : `Agent request failed (${res.status}).`,
+    } as AgentDetailResponse
+  }
+
+  try {
+    return JSON.parse(text) as AgentDetailResponse
+  } catch {
+    return {
+      success: false,
+      error: res.ok
+        ? "Agent response was not valid JSON."
+        : `Agent request failed (${res.status}).`,
+    } as AgentDetailResponse
+  }
 }
 
 function getAgentDetailCacheKey(agentId: string, userId?: string) {

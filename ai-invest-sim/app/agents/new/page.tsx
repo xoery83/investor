@@ -8,6 +8,27 @@ import type { User } from "@supabase/supabase-js"
 import { supabase } from "../../../src/lib/supabase"
 import type { AgentConfigDraft } from "../../api/agents/parse-profile/route"
 
+type CurrentUser = {
+  id: string
+  email: string | null
+  profile: {
+    role: "admin" | "free" | "plus" | "pro"
+    plan_status: string
+  }
+}
+
+type CopycatSource = {
+  id: string
+  name: string
+  manager_name: string | null
+  description: string | null
+  source_type: string
+  benchmark_symbol: string | null
+  rebalance_frequency: string
+  default_base_currency: string
+  status: string
+}
+
 export default function NewAgentPage() {
   const router = useRouter()
 
@@ -22,10 +43,41 @@ export default function NewAgentPage() {
   const [notice, setNotice] = useState("")
   const [authLoading, setAuthLoading] = useState(true)
   const [user, setUser] = useState<User | null>(null)
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
+  const [agentMode, setAgentMode] = useState<"ai_manager" | "copycat">(
+    "ai_manager"
+  )
+  const [copycatSourceId, setCopycatSourceId] = useState("")
+  const [copycatSources, setCopycatSources] = useState<CopycatSource[]>([])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       setUser(data.user)
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+
+      if (token) {
+        const [meRes, sourcesRes] = await Promise.all([
+          fetch("/api/auth/me", {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch("/api/copycat-sources"),
+        ])
+
+        if (meRes.ok) {
+          const meData = await meRes.json()
+          if (meData.success) setCurrentUser(meData.user)
+        }
+
+        if (sourcesRes.ok) {
+          const sourcesData = await sourcesRes.json()
+          if (sourcesData.success) {
+            const sources = sourcesData.sources || []
+            setCopycatSources(sources)
+            if (sources[0]?.id) setCopycatSourceId(sources[0].id)
+          }
+        }
+      }
       setAuthLoading(false)
     })
   }, [])
@@ -100,6 +152,9 @@ export default function NewAgentPage() {
         profile: draft.profile,
         risk_policy: draft.risk_policy,
         workflow_config: draft.workflow_config,
+        agent_mode: agentMode,
+        copycat_source_id:
+          agentMode === "copycat" ? copycatSourceId || null : null,
       }),
     })
 
@@ -147,6 +202,8 @@ export default function NewAgentPage() {
       </main>
     )
   }
+
+  const canCreateCopycat = currentUser?.profile.role === "admin"
 
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
@@ -227,6 +284,61 @@ export default function NewAgentPage() {
               </p>
             </label>
 
+            {canCreateCopycat && (
+              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                <label className="block">
+                  <span className="mb-2 block text-sm text-slate-600">
+                    Agent Type
+                  </span>
+                  <select
+                    className="w-full rounded-lg border border-blue-200 bg-white px-4 py-2 text-slate-900"
+                    value={agentMode}
+                    onChange={(e) =>
+                      setAgentMode(
+                        e.target.value === "copycat"
+                          ? "copycat"
+                          : "ai_manager"
+                      )
+                    }
+                  >
+                    <option value="ai_manager">AI Manager</option>
+                    <option value="copycat">Copycat Source Tracker</option>
+                  </select>
+                </label>
+
+                {agentMode === "copycat" && (
+                  <label className="mt-4 block">
+                    <span className="mb-2 block text-sm text-slate-600">
+                      Copycat Source
+                    </span>
+                    <select
+                      className="w-full rounded-lg border border-blue-200 bg-white px-4 py-2 text-slate-900"
+                      value={copycatSourceId}
+                      onChange={(e) => setCopycatSourceId(e.target.value)}
+                      required={agentMode === "copycat"}
+                    >
+                      {copycatSources.length === 0 ? (
+                        <option value="">No active sources yet</option>
+                      ) : (
+                        copycatSources.map((source) => (
+                          <option key={source.id} value={source.id}>
+                            {source.name}
+                            {source.manager_name
+                              ? ` · ${source.manager_name}`
+                              : ""}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Copycat agents are a foundation feature for system agents
+                      that mirror known fund-manager portfolios.
+                    </p>
+                  </label>
+                )}
+              </div>
+            )}
+
             {error && (
               <div className="mt-4 rounded-lg border border-red-800 bg-red-950 p-3 text-sm text-red-300">
                 {error}
@@ -280,6 +392,24 @@ export default function NewAgentPage() {
                     label="Rebalance"
                     value={draft.rebalance_frequency}
                   />
+                  <DraftRow
+                    label="Agent Type"
+                    value={
+                      agentMode === "copycat"
+                        ? "Copycat Source Tracker"
+                        : "AI Manager"
+                    }
+                  />
+                  {agentMode === "copycat" && (
+                    <DraftRow
+                      label="Copycat Source"
+                      value={
+                        copycatSources.find(
+                          (source) => source.id === copycatSourceId
+                        )?.name || "No source selected"
+                      }
+                    />
+                  )}
                 </DraftBlock>
 
                 <DraftBlock title="Investment Profile">

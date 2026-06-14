@@ -19,8 +19,8 @@ export async function refreshPublicAgentValuationsCron({
   const { data: agents, error } = await supabase
     .from("agents")
     .select("*")
-    .eq("visibility", "public")
     .eq("lifecycle_status", "active")
+    .eq("is_active", true)
     .order("updated_at", { ascending: true })
     .limit(MAX_AGENTS_PER_RUN)
 
@@ -43,16 +43,26 @@ async function refreshAgentValuation({
   agent: Agent
 }) {
   try {
-    const readiness = await validateAgentPublicationReadiness({
-      supabase,
-      agent,
-    })
+    if (agent.visibility === "public") {
+      const readiness = await validateAgentPublicationReadiness({
+        supabase,
+        agent,
+      })
 
-    if (!readiness.ready) {
+      if (!readiness.ready) {
+        return {
+          agent_id: agent.id,
+          status: "skipped",
+          reason: readiness.blockers[0] || "Publication readiness failed.",
+        }
+      }
+    }
+
+    if (agent.visibility === "system") {
       return {
         agent_id: agent.id,
         status: "skipped",
-        reason: readiness.blockers[0] || "Publication readiness failed.",
+        reason: "system templates do not need portfolio valuation refresh",
       }
     }
 

@@ -6,6 +6,8 @@ import {
   defaultRiskPolicy,
   defaultWorkflowConfig,
 } from "../../../../src/lib/agents/default-config"
+import { DEFAULT_AGENT_MODEL } from "../../../../src/lib/agents/model-options"
+import { temperatureParam } from "../../../../src/lib/openai/model-params"
 import type {
   AgentProfile,
   RiskLevel,
@@ -31,8 +33,6 @@ export type AgentConfigDraft = {
   risk_policy: Omit<RiskPolicy, "agent_id" | "id" | "created_at" | "updated_at">
   workflow_config: Omit<WorkflowConfig, "agent_id" | "id" | "created_at" | "updated_at">
 }
-
-const MODEL = "gpt-4.1-mini"
 
 export async function POST(request: Request) {
   const body = (await request.json()) as ParseRequest
@@ -62,9 +62,10 @@ export async function POST(request: Request) {
 
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const model = DEFAULT_AGENT_MODEL
     const completion = await openai.chat.completions.create({
-      model: MODEL,
-      temperature: 0.2,
+      model,
+      ...temperatureParam(model, 0.2),
       response_format: { type: "json_object" },
       messages: [
         {

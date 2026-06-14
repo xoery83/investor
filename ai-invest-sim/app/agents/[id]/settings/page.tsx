@@ -5,6 +5,10 @@ import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 
 import { supabase } from "../../../../src/lib/supabase"
+import {
+  AGENT_MODEL_OPTIONS,
+  DEFAULT_AGENT_MODEL,
+} from "../../../../src/lib/agents/model-options"
 
 type AgentForm = {
   name: string
@@ -19,6 +23,7 @@ type AgentForm = {
   rebalance_frequency: string
   model_name: string
   base_currency: string
+  agent_mode: "ai_manager" | "copycat"
 }
 
 type ProfileForm = {
@@ -90,8 +95,9 @@ const defaultAgentForm: AgentForm = {
   manual_trade_allowed: true,
   proposal_execution_required: false,
   rebalance_frequency: "daily",
-  model_name: "gpt-4.1-mini",
+  model_name: DEFAULT_AGENT_MODEL,
   base_currency: "USD",
+  agent_mode: "ai_manager",
 }
 
 const defaultProfileForm: ProfileForm = {
@@ -148,6 +154,9 @@ export default function AgentSettingsPage() {
   const [naturalUpdate, setNaturalUpdate] = useState("")
   const [drafting, setDrafting] = useState(false)
   const [draftNotice, setDraftNotice] = useState("")
+  const [resetConfirm, setResetConfirm] = useState("")
+  const [resetting, setResetting] = useState(false)
+  const [resetNotice, setResetNotice] = useState("")
   const [profileConfig, setProfileConfig] = useState<Record<string, unknown>>({})
   const [riskPolicyConfig, setRiskPolicyConfig] = useState<
     Record<string, unknown>
@@ -200,8 +209,10 @@ export default function AgentSettingsPage() {
         manual_trade_allowed: agent.manual_trade_allowed !== false,
         proposal_execution_required: Boolean(agent.proposal_execution_required),
         rebalance_frequency: String(agent.rebalance_frequency || "daily"),
-        model_name: String(agent.model_name || "gpt-4.1-mini"),
+        model_name: String(agent.model_name || DEFAULT_AGENT_MODEL),
         base_currency: String(agent.base_currency || "USD"),
+        agent_mode:
+          agent.agent_mode === "copycat" ? "copycat" : "ai_manager",
       })
 
       setProfileForm({
@@ -414,6 +425,50 @@ export default function AgentSettingsPage() {
     setDrafting(false)
   }
 
+  async function handleResetAgent() {
+    setResetting(true)
+    setError("")
+    setResetNotice("")
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in before resetting this agent.")
+      setResetting(false)
+      return
+    }
+
+    const res = await fetch(`/api/agents/${id}/reset`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    const data = await res.json()
+
+    if (!data.success) {
+      setError(data.error || "Failed to reset agent.")
+      setResetting(false)
+      return
+    }
+
+    setResetConfirm("")
+    setResetNotice("Agent portfolio and run history were reset to initial cash.")
+    try {
+      window.sessionStorage.removeItem("agents:list:auth")
+      for (const key of Object.keys(window.sessionStorage)) {
+        if (key.startsWith(`agents:detail:${id}:`)) {
+          window.sessionStorage.removeItem(key)
+        }
+      }
+    } catch {
+      // Cache invalidation is best effort only.
+    }
+    setResetting(false)
+    router.refresh()
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-background p-8 text-foreground">
@@ -434,6 +489,7 @@ export default function AgentSettingsPage() {
     ...(canUseSystemVisibility ? [["system", "System"] as [string, string]] : []),
   ]
   const canEditLifecycle = isAdmin || isOwner
+  const canResetAgent = canEditSettings && agentForm.visibility === "private"
 
   if (!canEditSettings) {
     return (
@@ -477,6 +533,14 @@ export default function AgentSettingsPage() {
                 value={agentForm.philosophy || "No philosophy defined."}
               />
               <div className="grid gap-4 md:grid-cols-3">
+                <ReadOnlyField
+                  label="Agent Type"
+                  value={
+                    agentForm.agent_mode === "copycat"
+                      ? "Copycat Source Tracker"
+                      : "AI Manager"
+                  }
+                />
                 <ReadOnlyField label="Risk Level" value={agentForm.risk_level} />
                 <ReadOnlyField
                   label="Rebalance Frequency"
@@ -690,6 +754,30 @@ export default function AgentSettingsPage() {
             />
             <div className="grid gap-4 md:grid-cols-3">
               <SelectField
+                label="Agent Type"
+                value={agentForm.agent_mode}
+                onChange={(value) =>
+                  updateAgent(
+                    "agent_mode",
+                    value === "copycat" ? "copycat" : "ai_manager"
+                  )
+                }
+                options={[
+                  ["ai_manager", "AI Manager"],
+                  ...(isAdmin
+                    ? ([["copycat", "Copycat Source Tracker"]] as [
+                        string,
+                        string,
+                      ][])
+                    : []),
+                ]}
+                hint={
+                  isAdmin
+                    ? "Copycat mode is the foundation for admin-managed agents that mirror an external portfolio source."
+                    : "Only admins can create or convert copycat agents in this phase."
+                }
+              />
+              <SelectField
                 label="Risk Level"
                 value={agentForm.risk_level}
                 onChange={(value) => updateAgent("risk_level", value)}
@@ -711,10 +799,19 @@ export default function AgentSettingsPage() {
                   ["monthly", "Monthly"],
                 ]}
               />
-              <TextField
-                label="Model Name"
+              <SelectField
+                label="Model"
                 value={agentForm.model_name}
                 onChange={(value) => updateAgent("model_name", value)}
+                options={AGENT_MODEL_OPTIONS.map((option) => [
+                  option.value,
+                  option.label,
+                ])}
+                hint={
+                  AGENT_MODEL_OPTIONS.find(
+                    (option) => option.value === agentForm.model_name
+                  )?.description || "Model used for future agent runs."
+                }
               />
             </div>
             <div className="grid gap-4 md:grid-cols-3">
@@ -968,6 +1065,54 @@ export default function AgentSettingsPage() {
               }
             />
           </SettingsSection>
+
+          {canResetAgent && (
+            <SettingsSection
+              title="Danger Zone"
+              description="Reset this private agent back to its initial cash-only state for another initialization test."
+            >
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <h3 className="text-base font-semibold text-red-800">
+                      Clear portfolio and history
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-sm leading-relaxed text-red-700">
+                      This deletes holdings, valuations, holding snapshots, runs,
+                      trade proposals, validator results, and initialization
+                      discussions. Cash and current value return to initial capital.
+                    </p>
+                    {resetNotice && (
+                      <p className="mt-2 text-sm text-emerald-700">
+                        {resetNotice}
+                      </p>
+                    )}
+                  </div>
+                  <div className="min-w-[260px]">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-red-700">
+                        Type RESET to confirm
+                      </span>
+                      <input
+                        value={resetConfirm}
+                        onChange={(event) => setResetConfirm(event.target.value)}
+                        className="w-full rounded-lg border border-red-200 bg-white px-3 py-2 text-sm"
+                        placeholder="RESET"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleResetAgent}
+                      disabled={resetting || resetConfirm !== "RESET"}
+                      className="mt-2 w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:bg-red-200 disabled:text-red-500"
+                    >
+                      {resetting ? "Resetting..." : "Reset Agent Portfolio"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </SettingsSection>
+          )}
 
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700">

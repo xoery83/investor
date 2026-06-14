@@ -130,6 +130,14 @@ export async function calculateAndStoreValuation({
     )
   }
 
+  await storeHoldingSnapshots({
+    supabase,
+    agent,
+    holdings: weightedHoldings,
+    baseCurrency: normalizeCurrency(agent.base_currency),
+    recordedAt: now,
+  })
+
   return {
     valuation: valuation as AgentValuation,
     holdings: weightedHoldings,
@@ -138,6 +146,57 @@ export async function calculateAndStoreValuation({
     total_value: totalValue,
     base_currency: normalizeCurrency(agent.base_currency),
   }
+}
+
+async function storeHoldingSnapshots({
+  supabase,
+  agent,
+  holdings,
+  baseCurrency,
+  recordedAt,
+}: {
+  supabase: SupabaseClient
+  agent: Agent
+  holdings: UpdatedHolding[]
+  baseCurrency: string
+  recordedAt: Date
+}) {
+  if (holdings.length === 0) return
+
+  const { error } = await supabase.from("agent_holding_snapshots").insert(
+    holdings.map((holding) => ({
+      agent_id: agent.id,
+      holding_id: holding.id,
+      symbol: holding.symbol,
+      asset_type: holding.asset_type,
+      quantity: Number(holding.quantity || 0),
+      price_local: Number(holding.current_price || 0),
+      currency: normalizeCurrency(holding.currency || baseCurrency),
+      fx_rate_to_base: Number(holding.fx_rate_to_base || 1),
+      market_value_local: Number(
+        holding.market_value_local || holding.market_value || 0
+      ),
+      market_value_base: Number(
+        holding.market_value_base || holding.market_value || 0
+      ),
+      weight: Number(holding.weight || 0),
+      base_currency: baseCurrency,
+      price_source: holding.price_source || "manual",
+      market_state: holding.market_state || null,
+      recorded_at: recordedAt.toISOString(),
+    }))
+  )
+
+  if (error && !isMissingSnapshotTableError(error.message)) {
+    throw new Error(`Failed to store holding snapshots: ${error.message}`)
+  }
+}
+
+function isMissingSnapshotTableError(message: string) {
+  return (
+    message.includes("agent_holding_snapshots") &&
+    (message.includes("schema cache") || message.includes("does not exist"))
+  )
 }
 
 async function refreshHoldingPrices(

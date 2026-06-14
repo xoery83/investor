@@ -17,6 +17,10 @@ export type Agent = {
 
   owner_user_id: string | null
 
+  agent_mode?: "ai_manager" | "copycat"
+
+  copycat_source_id?: string | null
+
   visibility: "private" | "public" | "system"
 
   creator_type: "admin" | "user"
@@ -132,6 +136,25 @@ export type AgentValuation = {
   recorded_at: string
 }
 
+export type AgentHoldingSnapshot = {
+  id: string
+  agent_id: string
+  holding_id: string | null
+  symbol: string
+  asset_type: string | null
+  quantity: number
+  price_local: number
+  currency: string
+  fx_rate_to_base: number
+  market_value_local: number
+  market_value_base: number
+  weight: number
+  base_currency: string
+  price_source: string | null
+  market_state: string | null
+  recorded_at: string
+}
+
 export type AgentProfile = {
   id?: string
   agent_id: string
@@ -204,6 +227,33 @@ export type AgentInvestmentUniverse = {
   updated_at?: string
 }
 
+export type AgentMemoryCard = {
+  id: string
+  agent_id: string
+  memory_type:
+    | "thesis"
+    | "constraint"
+    | "user_preference"
+    | "rejected_idea"
+    | "approved_change"
+    | "risk_event"
+    | "universe_change"
+    | "execution_note"
+    | "copycat_source"
+  title: string
+  content: string
+  symbols: string[]
+  importance: number
+  confidence: number
+  status: "active" | "superseded" | "archived"
+  source_run_id: string | null
+  source_trade_proposal_id: string | null
+  source_initialization_version_id: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export type TradeProposal = {
   id: string
   agent_id: string
@@ -217,6 +267,71 @@ export type TradeProposal = {
 
 export type TradeProposalWithValidation = TradeProposal & {
   validator_results?: ValidatorResult[]
+  portfolio_evaluations?: PortfolioEvaluation[]
+}
+
+export type PortfolioEvaluation = {
+  id?: string
+  agent_id?: string
+  evaluation_scope: string
+  source_run_id?: string | null
+  trade_proposal_id?: string | null
+  initialization_version_id?: string | null
+  benchmark_symbol?: string | null
+  period: string
+  base_currency: string
+  metrics: Record<string, unknown>
+  effective_exposures: unknown[]
+  overlap_warnings: unknown[]
+  target_fit_score: number | null
+  target_return_probability: number | null
+  summary: string | null
+  source: string
+  created_at?: string
+}
+
+export type AgentInitializationSession = {
+  id: string
+  agent_id: string
+  user_id: string
+  status: "draft" | "in_review" | "approved" | "executed" | "abandoned"
+  current_version: number
+  max_revisions: number
+  approved_version_id: string | null
+  created_at: string
+  updated_at: string
+  approved_at: string | null
+  executed_at: string | null
+  versions?: AgentInitializationVersion[]
+  messages?: AgentInitializationMessage[]
+}
+
+export type AgentInitializationVersion = {
+  id: string
+  session_id: string
+  agent_id: string
+  trade_proposal_id: string | null
+  version_number: number
+  source: "initial" | "revision" | "alternative" | "committee"
+  user_feedback: string | null
+  proposal: unknown
+  thesis: unknown
+  self_critique: unknown
+  risk_validation: unknown
+  status: "draft" | "current" | "superseded" | "approved" | "executed"
+  created_at: string
+  trade_proposals?: TradeProposalWithValidation | null
+}
+
+export type AgentInitializationMessage = {
+  id: string
+  session_id: string
+  version_id: string | null
+  agent_id: string
+  role: "user" | "assistant" | "system"
+  message_type: "question" | "answer" | "change_request" | "revision_summary" | "message"
+  content: string
+  created_at: string
 }
 
 export type AgentFollow = {

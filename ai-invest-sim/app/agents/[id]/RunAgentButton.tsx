@@ -8,14 +8,20 @@ import { supabase } from "../../../src/lib/supabase"
 export default function RunAgentButton({
   agentId,
   initialBuildMode = false,
+  onRunStarted,
   onRunCompleted,
+  onRunFinished,
 }: {
   agentId: string
   initialBuildMode?: boolean
+  onRunStarted?: (runType: AgentRunType) => void
   onRunCompleted?: (payload: {
     run?: unknown
     trade_proposal?: unknown
+    evaluation?: unknown
+    initialization?: unknown
   }) => void
+  onRunFinished?: () => void
 }) {
   const router = useRouter()
   const [loadingType, setLoadingType] = useState<AgentRunType | null>(null)
@@ -24,42 +30,51 @@ export default function RunAgentButton({
   async function handleRun(runType: AgentRunType) {
     setLoadingType(runType)
     setError("")
+    onRunStarted?.(runType)
 
-    const { data: sessionData } = await supabase.auth.getSession()
-    const token = sessionData.session?.access_token
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
 
-    if (!token) {
-      setError("Please log in before running this agent.")
+      if (!token) {
+        setError("Please log in before running this agent.")
+        return
+      }
+
+      const res = await fetch(`/api/agents/${agentId}/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          run_type: runType,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!data.success) {
+        setError(data.error || "Failed to run agent")
+        return
+      }
+
+      clearAgentDetailCache(agentId)
+      onRunCompleted?.({
+        run: data.run,
+        trade_proposal: data.trade_proposal,
+        evaluation: data.evaluation,
+        initialization: data.initialization,
+      })
+      router.refresh()
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Failed to run agent"
+      )
+    } finally {
       setLoadingType(null)
-      return
+      onRunFinished?.()
     }
-
-    const res = await fetch(`/api/agents/${agentId}/run`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        run_type: runType,
-      }),
-    })
-
-    const data = await res.json()
-
-    if (!data.success) {
-      setError(data.error || "Failed to run agent")
-      setLoadingType(null)
-      return
-    }
-
-    setLoadingType(null)
-    clearAgentDetailCache(agentId)
-    onRunCompleted?.({
-      run: data.run,
-      trade_proposal: data.trade_proposal,
-    })
-    router.refresh()
   }
 
   return (

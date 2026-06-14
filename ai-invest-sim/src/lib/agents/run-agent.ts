@@ -2,11 +2,14 @@ import OpenAI from "openai"
 
 import { buildAgentPrompt } from "./build-agent-prompt"
 import { buildInitialPortfolioPrompt } from "./build-initial-portfolio-prompt"
+import { formatMemoryCardsForPrompt } from "./memory-cards"
+import { DEFAULT_AGENT_MODEL } from "./model-options"
 
 import {
   Agent,
   AgentHolding,
   AgentInvestmentUniverse,
+  AgentMemoryCard,
   AgentProfile,
   AgentRun,
   AgentValuation,
@@ -16,6 +19,7 @@ import {
 } from "../types/agent"
 import type { PortfolioDiagnostic } from "./diagnose-portfolio"
 import type { LocalValidationResult } from "./validate-trade-proposal"
+import { temperatureParam } from "../openai/model-params"
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -31,6 +35,7 @@ type RunAgentInput = {
   workflowConfig?: WorkflowConfig
   diagnostic?: PortfolioDiagnostic
   universe?: AgentInvestmentUniverse | null
+  memoryCards?: AgentMemoryCard[]
 }
 
 type ResearchRunInput = RunAgentInput & {
@@ -47,6 +52,7 @@ export async function runAgent({
   workflowConfig,
   diagnostic,
   universe,
+  memoryCards,
 }: RunAgentInput) {
   const prompt = buildAgentPrompt({
     agent,
@@ -58,20 +64,19 @@ export async function runAgent({
     workflowConfig,
     diagnostic,
     universe,
+    memoryCards,
   })
+  const model = agent.model_name || DEFAULT_AGENT_MODEL
 
   const response = await client.chat.completions.create({
-    model: agent.model_name || "gpt-4.1-mini",
-
+    model,
     messages: [
       {
         role: "system",
         content: prompt,
       },
     ],
-
-    temperature: 0.4,
-
+    ...temperatureParam(model, 0.4),
     response_format: {
       type: "json_object",
     },
@@ -95,6 +100,7 @@ export async function runInitialBuildAgent({
   riskPolicy,
   workflowConfig,
   universe,
+  memoryCards,
 }: RunAgentInput) {
   const prompt = buildInitialPortfolioPrompt({
     agent,
@@ -105,17 +111,19 @@ export async function runInitialBuildAgent({
     riskPolicy,
     workflowConfig,
     universe,
+    memoryCards,
   })
+  const model = agent.model_name || DEFAULT_AGENT_MODEL
 
   const response = await client.chat.completions.create({
-    model: agent.model_name || "gpt-4.1-mini",
+    model,
     messages: [
       {
         role: "system",
         content: prompt,
       },
     ],
-    temperature: 0.45,
+    ...temperatureParam(model, 0.45),
     response_format: {
       type: "json_object",
     },
@@ -127,6 +135,135 @@ export async function runInitialBuildAgent({
     throw new Error("No response from model")
   }
 
+  return JSON.parse(content)
+}
+
+export async function discussInitializationProposal({
+  agent,
+  proposal,
+  validation,
+  userQuestion,
+}: {
+  agent: Agent
+  proposal: unknown
+  validation: unknown
+  userQuestion: string
+}) {
+  const model = agent.model_name || DEFAULT_AGENT_MODEL
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: "system",
+        content: `You are an AI portfolio manager discussing an initialization portfolio proposal with the user.
+This is a simulation, not financial advice.
+Answer clearly and specifically. Reference the proposal's allocation, investment thesis, self-critique, and risk validation.
+If the user asks for a change, explain what would likely change, but do not claim the portfolio has been modified unless a revision endpoint is called later.
+Keep the answer concise and practical.`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            agent: {
+              name: agent.name,
+              description: agent.description,
+              philosophy: agent.philosophy,
+              risk_level: agent.risk_level,
+              base_currency: agent.base_currency || "USD",
+            },
+            proposal,
+            validation,
+            user_question: userQuestion,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    ...temperatureParam(model, 0.35),
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error("No discussion response from model")
+  return content
+}
+
+export async function reviseInitializationProposal({
+  agent,
+  currentProposal,
+  validation,
+  userFeedback,
+  profile,
+  riskPolicy,
+  universe,
+  memoryCards,
+}: {
+  agent: Agent
+  currentProposal: unknown
+  validation: unknown
+  userFeedback: string
+  profile?: AgentProfile
+  riskPolicy?: RiskPolicy
+  universe?: AgentInvestmentUniverse | null
+  memoryCards?: AgentMemoryCard[]
+}) {
+  const memoryCardsText = formatMemoryCardsForPrompt(memoryCards || [])
+  const model = agent.model_name || DEFAULT_AGENT_MODEL
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: "system",
+        content: `You are revising an initialization portfolio proposal after an investment committee discussion.
+This is a simulation, not financial advice.
+Return ONLY valid JSON in the same structure as the current proposal.
+
+User feedback is an instruction to modify the portfolio, not merely a question.
+Preserve the agent's investment mandate, target markets, risk policy, active universe, and target allocation sum.
+
+Hard rules:
+- The revised target_allocation must sum to 100%.
+- Include CASH in target_allocation.
+- Do not include CASH in suggested_actions.
+- Every non-cash target allocation should have a matching BUY/HOLD/SELL suggested action when relevant.
+- Cash target must stay between ${riskPolicy?.min_cash_pct ?? "?"}% and ${riskPolicy?.max_cash_pct ?? "?"}% unless the user explicitly asks for a value and it is still risk-valid.
+- Single stock target must not exceed ${riskPolicy?.max_single_stock_pct ?? "?"}%.
+- ETF target must not exceed ${riskPolicy?.max_etf_pct ?? "?"}%.
+- Target markets are hard constraints: ${profile?.target_markets?.join(", ") || "not configured"}.
+- Allowed assets are hard constraints: ${profile?.allowed_assets?.join(", ") || "not configured"}.
+- Active universe core ETFs: ${universe?.core_etfs?.join(", ") || "not configured"}.
+- Active universe core stocks: ${universe?.core_stocks?.join(", ") || "not configured"}.
+- Active universe watchlist: ${universe?.watchlist?.join(", ") || "not configured"}.
+- Long-term memory cards:
+${memoryCardsText}
+- If a requested symbol is outside the active universe, include it only if it clearly matches the target market and explain the universe expansion need in self_critique.
+- Respect active long-term memory cards unless they conflict with risk policy or target market constraints.
+- Update investment_thesis, self_critique, sector_exposure, target_allocation, suggested_actions, risk_analysis, risks, key_assumptions, and allocation_comment to reflect the revision.
+- Set proposal_type to the same proposal type unless the current proposal is missing it.
+- Make the summary explicitly indicate this is a revised proposal.`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            user_feedback: userFeedback,
+            current_proposal: currentProposal,
+            current_validation: validation,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+    ...temperatureParam(model, 0.35),
+    response_format: {
+      type: "json_object",
+    },
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error("No revised initialization response from model")
   return JSON.parse(content)
 }
 
@@ -156,8 +293,9 @@ export async function reviseAgentRecommendation({
 - Total turnover must not exceed ${riskPolicy.max_weekly_turnover_pct}%.
 `
 
+  const model = agent.model_name || DEFAULT_AGENT_MODEL
   const response = await client.chat.completions.create({
-    model: agent.model_name || "gpt-4.1-mini",
+    model,
     messages: [
       {
         role: "system",
@@ -200,7 +338,7 @@ ${turnoverRules.trimEnd()}
         ),
       },
     ],
-    temperature: 0.2,
+    ...temperatureParam(model, 0.2),
     response_format: {
       type: "json_object",
     },
@@ -235,16 +373,17 @@ export async function runResearchAgent({
     workflowConfig,
     runType,
   })
+  const model = agent.model_name || DEFAULT_AGENT_MODEL
 
   const response = await client.chat.completions.create({
-    model: agent.model_name || "gpt-4.1-mini",
+    model,
     messages: [
       {
         role: "system",
         content: prompt,
       },
     ],
-    temperature: runType === "weekly" ? 0.35 : 0.25,
+    ...temperatureParam(model, runType === "weekly" ? 0.35 : 0.25),
     response_format: {
       type: "json_object",
     },

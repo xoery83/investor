@@ -13,11 +13,18 @@ import {
 } from "../../../../../src/lib/agents/build-staged-remediation-proposal"
 import { diagnosePortfolio } from "../../../../../src/lib/agents/diagnose-portfolio"
 import {
+  addMemoryCards,
+  buildProposalMemoryCards,
+  getActiveMemoryCards,
+} from "../../../../../src/lib/agents/memory-cards"
+import { evaluateAndStorePortfolio } from "../../../../../src/lib/agents/portfolio-evaluation"
+import {
   reviseAgentRecommendation,
   runAgent,
   runInitialBuildAgent,
   runResearchAgent,
 } from "../../../../../src/lib/agents/run-agent"
+import { storeInitializationVersion } from "../../../../../src/lib/agents/initialization-workflow"
 import { validateTradeProposal } from "../../../../../src/lib/agents/validate-trade-proposal"
 import {
   canManualRunToday,
@@ -112,6 +119,7 @@ export async function POST(
       getWorkflowConfig(id),
       getInvestmentUniverse(id),
     ])
+    const memoryCards = await getActiveMemoryCards(supabase, id)
     const universe =
       existingUniverse ||
       (await createInvestmentUniverse({
@@ -153,6 +161,7 @@ export async function POST(
         profile,
         riskPolicy,
         workflowConfig,
+        memoryCards,
         runType,
       })
 
@@ -213,6 +222,7 @@ export async function POST(
           riskPolicy,
           workflowConfig,
           universe,
+          memoryCards,
         })
       : diagnostic.manual_required
       ? buildManualInterventionProposal({ diagnostic })
@@ -226,6 +236,7 @@ export async function POST(
           workflowConfig,
           diagnostic,
           universe,
+          memoryCards,
         })
 
     let validation = validateTradeProposal({
@@ -357,12 +368,56 @@ export async function POST(
       )
     }
 
+    const initialization =
+      validationMode === "initial_build" || validationMode === "capital_deployment"
+        ? await storeInitializationVersion({
+            supabase,
+            agent,
+            userId: requestUser.id,
+            proposalId: proposalRecord.id,
+            proposal: result,
+            validation: validatorRecord,
+            source: "initial",
+          })
+        : null
+
+    const evaluation = await evaluateAndStorePortfolio({
+      supabase,
+      agent,
+      holdings: holdingsList,
+      proposal: result,
+      riskPolicy,
+      evaluationScope:
+        validationMode === "initial_build" ||
+        validationMode === "capital_deployment"
+          ? "initial_proposal"
+          : "rebalance_proposal",
+      sourceRunId: runRecord.id,
+      tradeProposalId: proposalRecord.id,
+      initializationVersionId: initialization?.version?.id || null,
+      period: "1Y",
+    })
+
+    await addMemoryCards(
+      supabase,
+      buildProposalMemoryCards({
+        agentId: id,
+        proposal: result,
+        validation: validatorRecord,
+        sourceRunId: runRecord.id,
+        sourceTradeProposalId: proposalRecord.id,
+        sourceInitializationVersionId: initialization?.version?.id || null,
+      })
+    )
+
     return NextResponse.json({
       success: true,
       result,
       run: runRecord,
       trade_proposal: proposalRecord,
       validation: validatorRecord,
+      evaluation,
+      initialization,
     })
   } catch (error) {
     return NextResponse.json(
