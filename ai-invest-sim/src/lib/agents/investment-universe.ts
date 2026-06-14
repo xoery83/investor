@@ -31,6 +31,7 @@ export async function generateInvestmentUniverse({
 }: UniverseGenerationInput): Promise<UniverseGenerationResult> {
   const fallback = buildFallbackUniverse({ agent, profile, riskPolicy })
   const prompt = buildUniversePrompt({ agent, profile, riskPolicy })
+  const explicitSymbols = getExplicitUniverseSymbols(profile)
 
   if (!process.env.OPENAI_API_KEY) {
     return {
@@ -73,7 +74,7 @@ export async function generateInvestmentUniverse({
     const parsed = JSON.parse(content)
     return {
       universe: {
-        ...normalizeUniverse(parsed, fallback),
+        ...withExplicitSymbols(normalizeUniverse(parsed, fallback), explicitSymbols),
         generation_prompt: prompt,
         generation_result: parsed,
         source: "openai",
@@ -137,6 +138,8 @@ Structured profile:
 - Allowed assets: ${profile.allowed_assets.join(", ")}
 - Excluded assets: ${profile.excluded_assets.join(", ")}
 - Manager instructions: ${profile.manager_instructions || "None"}
+- Explicit allowed symbols: ${getExplicitUniverseSymbols(profile).join(", ") || "None"}
+- Watchlist symbols: ${getConfigSymbols(profile.config, "watchlist_symbols").join(", ") || "None"}
 
 Risk policy:
 - Cash range: ${riskPolicy.min_cash_pct}% - ${riskPolicy.max_cash_pct}%
@@ -147,6 +150,7 @@ Risk policy:
 Rules:
 - Use symbols compatible with Yahoo Finance where possible.
 - The universe must stay inside target markets and allowed assets.
+- Explicit allowed symbols are user-approved ticker symbols. Include them in core_stocks, core_etfs, or watchlist unless they conflict with prohibited assets.
 - Prefer diversified ETFs first when the strategy allows ETFs.
 - Include representative stocks only when they match the target market and style.
 - Exclude broad-market instruments that do not match the user's target market.
@@ -187,8 +191,10 @@ function buildFallbackUniverse({
     .join(" ")
     .toLowerCase()
 
+  const explicitSymbols = getExplicitUniverseSymbols(profile)
+
   if (isAustraliaProfile(text)) {
-    return baseUniverse({
+    return withExplicitSymbols(baseUniverse({
       universe_name: "Australia Core Equity and Income",
       market_scope: ["Australia", "ASX"],
       allowed_exchanges: ["ASX"],
@@ -198,11 +204,11 @@ function buildFallbackUniverse({
       watchlist: ["NAB.AX", "WBC.AX", "MQG.AX"],
       excluded_assets: [...riskPolicy.prohibited_assets, "US broad market ETFs"],
       confidence: "medium",
-    })
+    }), explicitSymbols)
   }
 
   if (isChinaTechProfile(text)) {
-    return baseUniverse({
+    return withExplicitSymbols(baseUniverse({
       universe_name: "China Technology HK and US Listed",
       market_scope: ["China technology", "Hong Kong", "US ADRs"],
       allowed_exchanges: ["HKEX", "NASDAQ", "NYSE"],
@@ -220,10 +226,10 @@ function buildFallbackUniverse({
       watchlist: ["9999.HK", "1024.HK", "PDD", "NTES"],
       excluded_assets: [...riskPolicy.prohibited_assets, "broad US ETFs"],
       confidence: "medium",
-    })
+    }), explicitSymbols)
   }
 
-  return baseUniverse({
+  return withExplicitSymbols(baseUniverse({
     universe_name: "US Core Equity",
     market_scope: ["United States", "large cap equities"],
     allowed_exchanges: ["NYSE", "NASDAQ"],
@@ -233,7 +239,7 @@ function buildFallbackUniverse({
     watchlist: ["META", "BRK-B", "JPM"],
     excluded_assets: riskPolicy.prohibited_assets,
     confidence: "low",
-  })
+  }), explicitSymbols)
 }
 
 function baseUniverse(
@@ -319,6 +325,38 @@ function uniqueSymbols(values: string[]) {
   return Array.from(
     new Set(values.map((value) => normalizeMarketSymbol(value)).filter(Boolean))
   )
+}
+
+function withExplicitSymbols(
+  universe: UniverseGenerationResult["universe"],
+  explicitSymbols: string[]
+) {
+  if (explicitSymbols.length === 0) return universe
+
+  return {
+    ...universe,
+    watchlist: uniqueSymbols([...universe.watchlist, ...explicitSymbols]),
+  }
+}
+
+function getExplicitUniverseSymbols(profile: AgentProfile) {
+  return uniqueSymbols([
+    ...getConfigSymbols(profile.config, "allowed_symbols"),
+    ...getConfigSymbols(profile.config, "watchlist_symbols"),
+  ])
+}
+
+function getConfigSymbols(config: Record<string, unknown>, key: string) {
+  const value = config[key]
+  if (Array.isArray(value)) {
+    return uniqueSymbols(
+      value.map((item) => (typeof item === "string" ? item : ""))
+    )
+  }
+  if (typeof value === "string") {
+    return uniqueSymbols(value.split(/[\s,]+/))
+  }
+  return []
 }
 
 function readString(value: unknown, fallback: string) {

@@ -943,6 +943,26 @@ export default function AgentSettingsPage() {
                 hint="One per line or comma separated."
               />
             </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <TextAreaField
+                label="Explicit Allowed Symbols"
+                value={configListToText(profileConfig.allowed_symbols)}
+                onChange={(value) =>
+                  updateProfileConfigList("allowed_symbols", value)
+                }
+                rows={4}
+                hint="Ticker symbols that should be explicitly allowed, for example SPCX, KWEB, 9988.HK. These are added to the active investment universe after save."
+              />
+              <TextAreaField
+                label="Watchlist Symbols"
+                value={configListToText(profileConfig.watchlist_symbols)}
+                onChange={(value) =>
+                  updateProfileConfigList("watchlist_symbols", value)
+                }
+                rows={4}
+                hint="Symbols the agent may consider, but should still justify before allocating."
+              />
+            </div>
             <TextAreaField
               label="Manager Instructions"
               value={profileForm.manager_instructions}
@@ -1152,6 +1172,13 @@ export default function AgentSettingsPage() {
     value: ProfileForm[Key]
   ) {
     setProfileForm((current) => ({ ...current, [key]: value }))
+  }
+
+  function updateProfileConfigList(key: string, value: string) {
+    setProfileConfig((current) => ({
+      ...current,
+      [key]: textToList(value).map((symbol) => symbol.toUpperCase()),
+    }))
   }
 
   function updateRisk<Key extends keyof RiskForm>(
@@ -1636,6 +1663,12 @@ function WorkflowToggle({
 
 function listToText(value: unknown) {
   return Array.isArray(value) ? value.map(String).join("\n") : ""
+}
+
+function configListToText(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).join("\n")
+  if (typeof value === "string") return value
+  return ""
 }
 
 function listToTextOrFallback(value: unknown, fallback: string) {

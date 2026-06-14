@@ -7,6 +7,7 @@ import {
   defaultWorkflowConfig,
 } from "../../../../src/lib/agents/default-config"
 import { generateInvestmentUniverse } from "../../../../src/lib/agents/investment-universe"
+import { addMemoryCards } from "../../../../src/lib/agents/memory-cards"
 import { validateAgentPublicationReadiness } from "../../../../src/lib/agents/publication-readiness"
 import {
   canActivateMoreAgents,
@@ -699,6 +700,23 @@ export async function PATCH(
       profile: (profilePayload || (await getAgentProfile(id))) as AgentProfile,
       riskPolicy: (riskPolicyPayload || (await getRiskPolicy(id))) as RiskPolicy,
     })
+
+    if (profilePayload) {
+      const explicitSymbols = getExplicitConfigSymbols(profilePayload.config)
+      if (explicitSymbols.length > 0) {
+        await addMemoryCards(supabase, [
+          {
+            agentId: id,
+            memoryType: "user_preference",
+            title: "Manager explicitly allowed symbols",
+            content: `The manager explicitly allowed these symbols in settings: ${explicitSymbols.join(", ")}. Treat them as approved universe candidates unless they conflict with risk policy or prohibited assets.`,
+            symbols: explicitSymbols,
+            importance: 5,
+            confidence: 1,
+          },
+        ])
+      }
+    }
   }
 
   if (publishingToPublic) {
@@ -897,4 +915,36 @@ function resolveCreatorDisplayName(
   if (agent.visibility === "system") return "System"
   if (agent.creator_type === "admin") return "Admin"
   return "Unknown user"
+}
+
+function getExplicitConfigSymbols(config: unknown) {
+  const record =
+    config && typeof config === "object" && !Array.isArray(config)
+      ? (config as Record<string, unknown>)
+      : {}
+
+  return uniqueSymbols([
+    ...readConfigSymbols(record.allowed_symbols),
+    ...readConfigSymbols(record.watchlist_symbols),
+  ])
+}
+
+function readConfigSymbols(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => (typeof item === "string" ? item : ""))
+  }
+  if (typeof value === "string") {
+    return value.split(/[\s,]+/)
+  }
+  return []
+}
+
+function uniqueSymbols(values: string[]) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value.trim().toUpperCase())
+        .filter((value) => /^[A-Z0-9.-]+$/.test(value))
+    )
+  )
 }
