@@ -387,6 +387,15 @@ export default function DataSettingsPage() {
                   onCreate={() => createCopycatSourceFromResult()}
                 />
               )}
+            {activeTab === "copycat-snapshot" &&
+              getSnapshotExtraction(result) && (
+                <CopycatSnapshotReview
+                  result={result}
+                  warnings={readWarnings(
+                    isRecord(result) ? result.warnings : null
+                  )}
+                />
+              )}
             {sourceWriteStatus && (
               <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
                 {sourceWriteStatus}
@@ -427,13 +436,13 @@ export default function DataSettingsPage() {
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="text-slate-500">
                 <tr>
-                  <th className="py-2">Created</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Target</th>
-                  <th>Confidence</th>
-                  <th>Warnings</th>
-                  <th>Action</th>
+                  <th className="px-2 py-2">Created</th>
+                  <th className="px-2">Type</th>
+                  <th className="px-2">Status</th>
+                  <th className="px-2">Target</th>
+                  <th className="px-2">Confidence</th>
+                  <th className="px-2">Warnings</th>
+                  <th className="px-2">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -446,21 +455,21 @@ export default function DataSettingsPage() {
                 )}
                 {jobs.map((job) => (
                   <tr key={job.id} className="border-t border-blue-100">
-                    <td className="py-2">{new Date(job.created_at).toLocaleString()}</td>
-                    <td>{job.job_type}</td>
-                    <td>{job.status}</td>
-                    <td>{job.target_symbol || job.target_name || "--"}</td>
-                    <td>
+                    <td className="px-2 py-2">{new Date(job.created_at).toLocaleString()}</td>
+                    <td className="px-2">{job.job_type}</td>
+                    <td className="px-2">{job.status}</td>
+                    <td className="px-2">{job.target_symbol || job.target_name || "--"}</td>
+                    <td className="px-2">
                       {typeof job.confidence === "number"
                         ? `${Math.round(job.confidence * 100)}%`
                         : "--"}
                     </td>
-                    <td className="max-w-md truncate">
+                    <td className="max-w-md truncate px-2">
                       {Array.isArray(job.warnings)
                         ? job.warnings.join("; ")
                         : job.error_message || "--"}
                     </td>
-                    <td>
+                    <td className="px-2">
                       {job.job_type === "copycat_source_discovery" &&
                       getFirstSourceCandidate(job) ? (
                         <div className="flex gap-2">
@@ -497,6 +506,26 @@ export default function DataSettingsPage() {
                             Create
                           </Button>
                         </div>
+                      ) : job.job_type === "copycat_snapshot" &&
+                        getSnapshotExtraction(job) ? (
+                        <Button
+                          variant="secondary"
+                          disabled={loading}
+                          onClick={() => {
+                            setActiveTab("copycat-snapshot")
+                            setResult({
+                              success: true,
+                              extracted_json: job.extracted_json || {},
+                              confidence: job.confidence,
+                              warnings: Array.isArray(job.warnings)
+                                ? job.warnings
+                                : [],
+                              job_status: job.status,
+                            })
+                          }}
+                        >
+                          Review
+                        </Button>
                       ) : (
                         "--"
                       )}
@@ -659,6 +688,138 @@ function CopycatSourceCandidateReview({
   )
 }
 
+function CopycatSnapshotReview({
+  result,
+  warnings,
+}: {
+  result: unknown
+  warnings: string[]
+}) {
+  const extracted = getSnapshotExtraction(result)
+  const holdings = getSnapshotHoldings(result)
+  const snapshotWritten = isRecord(result) && Boolean(result.snapshot)
+  const jobStatus = isRecord(result) ? readString(result.job_status) : null
+  const reportDate = extracted ? readString(extracted.report_date) : null
+  const effectiveDate = extracted ? readString(extracted.effective_date) : null
+  const baseCurrency = extracted
+    ? readString(extracted.base_currency) || "USD"
+    : "USD"
+  const totalWeight = holdings.reduce(
+    (sum, holding) => sum + (readNumber(holding.weight) || 0),
+    0
+  )
+  const topHoldings = holdings.slice(0, 6)
+
+  return (
+    <div
+      className={
+        snapshotWritten
+          ? "mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4"
+          : "mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4"
+      }
+    >
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p
+            className={
+              snapshotWritten
+                ? "text-xs font-semibold uppercase tracking-wide text-emerald-700"
+                : "text-xs font-semibold uppercase tracking-wide text-amber-800"
+            }
+          >
+            Snapshot Extraction
+          </p>
+          <h3 className="mt-1 text-lg font-semibold text-slate-900">
+            {snapshotWritten ? "Snapshot written" : "Needs review"}
+          </h3>
+          <p className="mt-1 text-sm text-slate-600">
+            {snapshotWritten
+              ? "The extracted holdings were saved and can drive copycat agent runs."
+              : "The extraction did not produce a usable holdings snapshot yet."}
+          </p>
+        </div>
+        <span className="rounded-full border border-blue-200 bg-white px-3 py-1 text-sm text-blue-800">
+          {jobStatus || (snapshotWritten ? "completed" : "needs_review")}
+        </span>
+      </div>
+
+      <dl className="grid gap-3 text-sm md:grid-cols-2">
+        <div>
+          <dt className="font-medium text-slate-500">Report Date</dt>
+          <dd className="mt-1 text-slate-900">{reportDate || "Missing"}</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Effective Date</dt>
+          <dd className="mt-1 text-slate-900">{effectiveDate || "--"}</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Holdings Extracted</dt>
+          <dd className="mt-1 text-slate-900">{holdings.length}</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Total Weight</dt>
+          <dd className="mt-1 text-slate-900">
+            {totalWeight > 0 ? `${roundDisplay(totalWeight)}%` : "--"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Base Currency</dt>
+          <dd className="mt-1 text-slate-900">{baseCurrency}</dd>
+        </div>
+      </dl>
+
+      {topHoldings.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-medium text-slate-700">
+            Top extracted holdings
+          </p>
+          <div className="space-y-2">
+            {topHoldings.map((holding, index) => (
+              <div
+                key={`${readString(holding.symbol) || "holding"}-${index}`}
+                className="flex items-center justify-between rounded-lg border border-blue-100 bg-white px-3 py-2 text-sm"
+              >
+                <span className="font-medium text-slate-900">
+                  {readString(holding.symbol) || "--"}
+                </span>
+                <span className="text-slate-600">
+                  {roundDisplay(readNumber(holding.weight) || 0)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!snapshotWritten && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-white p-3">
+          <p className="text-sm font-medium text-amber-900">
+            Next action
+          </p>
+          <p className="mt-1 text-sm text-amber-800">
+            Provide a source URL or paste the raw 13F/holdings text, then run
+            Extract Snapshot again. A usable snapshot requires a report date and
+            at least one holding with a symbol and weight.
+          </p>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-white p-3">
+          <p className="mb-2 text-sm font-medium text-amber-900">
+            Review warnings
+          </p>
+          <ul className="space-y-1 text-sm text-amber-800">
+            {warnings.slice(0, 5).map((warning) => (
+              <li key={warning}>- {warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function getFirstSourceCandidate(value: unknown) {
   if (!isRecord(value)) return null
   const extracted = value.extracted_json
@@ -667,6 +828,23 @@ function getFirstSourceCandidate(value: unknown) {
   }
   const candidate = extracted.source_candidates.find(isRecord)
   return candidate || null
+}
+
+function getSnapshotExtraction(value: unknown) {
+  if (!isRecord(value)) return null
+  if (isRecord(value.extracted)) return value.extracted
+  if (isRecord(value.extracted_json)) return value.extracted_json
+  return null
+}
+
+function getSnapshotHoldings(value: unknown) {
+  if (!isRecord(value)) return []
+  const directHoldings = Array.isArray(value.holdings) ? value.holdings : null
+  if (directHoldings) return directHoldings.filter(isRecord)
+  const extracted = getSnapshotExtraction(value)
+  return extracted && Array.isArray(extracted.holdings)
+    ? extracted.holdings.filter(isRecord)
+    : []
 }
 
 function readString(value: unknown) {
@@ -681,6 +859,10 @@ function readWarnings(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : []
+}
+
+function roundDisplay(value: number) {
+  return Math.round(value * 100) / 100
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
