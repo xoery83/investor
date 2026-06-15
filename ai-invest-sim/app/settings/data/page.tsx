@@ -373,25 +373,39 @@ export default function DataSettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {activeTab === "copycat-source" && getFirstSourceCandidate(result) && (
-              <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                <p className="mb-3 text-sm text-emerald-800">
-                  A source candidate is available. Review the JSON below before
-                  creating the copycat source.
-                </p>
-                <Button disabled={loading} onClick={createCopycatSourceFromResult}>
-                  {loading ? "Creating..." : "Create Copycat Source"}
-                </Button>
-              </div>
-            )}
+            {activeTab === "copycat-source" &&
+              getFirstSourceCandidate(result) && (
+                <CopycatSourceCandidateReview
+                  candidate={getFirstSourceCandidate(result)!}
+                  confidence={readNumber(
+                    isRecord(result) ? result.confidence : null
+                  )}
+                  warnings={readWarnings(
+                    isRecord(result) ? result.warnings : null
+                  )}
+                  loading={loading}
+                  onCreate={() => createCopycatSourceFromResult()}
+                />
+              )}
             {sourceWriteStatus && (
               <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
                 {sourceWriteStatus}
               </p>
             )}
-            <pre className="max-h-[520px] overflow-auto rounded-lg border border-blue-100 bg-slate-950 p-3 text-xs text-blue-50">
-              {result ? JSON.stringify(result, null, 2) : "No result yet."}
-            </pre>
+            {result ? (
+              <details className="rounded-lg border border-blue-100 bg-white">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-slate-700">
+                  Raw JSON details
+                </summary>
+                <pre className="max-h-[420px] overflow-auto border-t border-blue-100 bg-slate-50 p-3 text-xs leading-relaxed text-slate-800">
+                  {JSON.stringify(result, null, 2)}
+                </pre>
+              </details>
+            ) : (
+              <p className="rounded-lg border border-blue-100 bg-slate-50 p-3 text-sm text-slate-500">
+                No result yet.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -547,6 +561,104 @@ function renderTabTitle(tab: string) {
   return "ETF Look-through Extraction"
 }
 
+function CopycatSourceCandidateReview({
+  candidate,
+  confidence,
+  warnings,
+  loading,
+  onCreate,
+}: {
+  candidate: Record<string, unknown>
+  confidence: number | null
+  warnings: string[]
+  loading: boolean
+  onCreate: () => void
+}) {
+  const sourceUrl = readString(candidate.source_url)
+  return (
+    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+            Source Candidate
+          </p>
+          <h3 className="mt-1 text-lg font-semibold text-slate-900">
+            {readString(candidate.name) || "Unnamed source"}
+          </h3>
+          <p className="mt-1 text-sm text-slate-600">
+            {readString(candidate.manager_name) || "Unknown manager"}
+          </p>
+        </div>
+        <span className="rounded-full border border-blue-200 bg-white px-3 py-1 text-sm text-blue-800">
+          {confidence !== null ? `${Math.round(confidence * 100)}% confidence` : "Confidence unknown"}
+        </span>
+      </div>
+
+      <dl className="grid gap-3 text-sm">
+        <div>
+          <dt className="font-medium text-slate-500">Source Type</dt>
+          <dd className="mt-1 text-slate-900">
+            {readString(candidate.source_type) || "manual"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Reason</dt>
+          <dd className="mt-1 text-slate-900">
+            {readString(candidate.reason) ||
+              readString(candidate.description) ||
+              "No explanation returned."}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Source URL</dt>
+          <dd className="mt-1 break-all text-blue-700">
+            {sourceUrl ? (
+              <a href={sourceUrl} target="_blank" rel="noreferrer">
+                {sourceUrl}
+              </a>
+            ) : (
+              <span className="text-slate-500">No URL returned</span>
+            )}
+          </dd>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <dt className="font-medium text-slate-500">Frequency</dt>
+            <dd className="mt-1 text-slate-900">
+              {readString(candidate.rebalance_frequency) || "quarterly"}
+            </dd>
+          </div>
+          <div>
+            <dt className="font-medium text-slate-500">Base Currency</dt>
+            <dd className="mt-1 text-slate-900">
+              {readString(candidate.default_base_currency) || "USD"}
+            </dd>
+          </div>
+        </div>
+      </dl>
+
+      {warnings.length > 0 && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="mb-2 text-sm font-medium text-amber-900">
+            Review warnings
+          </p>
+          <ul className="space-y-1 text-sm text-amber-800">
+            {warnings.slice(0, 4).map((warning) => (
+              <li key={warning}>- {warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-end">
+        <Button disabled={loading} onClick={onCreate}>
+          {loading ? "Creating..." : "Create Copycat Source"}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function getFirstSourceCandidate(value: unknown) {
   if (!isRecord(value)) return null
   const extracted = value.extracted_json
@@ -559,6 +671,16 @@ function getFirstSourceCandidate(value: unknown) {
 
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function readWarnings(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : []
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
