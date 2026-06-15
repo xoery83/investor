@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   const { data, error } = await serverSupabase
     .from("data_ingestion_jobs")
     .select(
-      "id,job_type,status,target_symbol,target_name,source_url,confidence,warnings,error_message,created_at,updated_at"
+      "id,job_type,status,target_symbol,target_name,source_url,extracted_json,confidence,warnings,error_message,created_at,updated_at"
     )
     .order("created_at", { ascending: false })
     .limit(25)

@@ -27,6 +27,7 @@ type IngestionJob = {
   target_symbol: string | null
   target_name: string | null
   source_url: string | null
+  extracted_json: Record<string, unknown> | null
   confidence: number | null
   warnings: unknown
   error_message: string | null
@@ -149,8 +150,8 @@ export default function DataSettingsPage() {
     }
   }
 
-  async function createCopycatSourceFromResult() {
-    const candidate = getFirstSourceCandidate(result)
+  async function createCopycatSourceFromResult(sourceResult = result) {
+    const candidate = getFirstSourceCandidate(sourceResult)
     if (!candidate || !token) return
 
     setLoading(true)
@@ -177,7 +178,7 @@ export default function DataSettingsPage() {
           status: "active",
           metadata: {
             ingestion_candidate: candidate,
-            ingestion_result: isRecord(result) ? result : {},
+            ingestion_result: isRecord(sourceResult) ? sourceResult : {},
           },
         }),
       })
@@ -316,7 +317,7 @@ export default function DataSettingsPage() {
                     })
                   }
                 >
-                  {loading ? "Discovering..." : "Discover Copycat Source"}
+                  {loading ? "Discovering..." : "Discover Source Candidate"}
                 </Button>
               </div>
             )}
@@ -418,12 +419,13 @@ export default function DataSettingsPage() {
                   <th>Target</th>
                   <th>Confidence</th>
                   <th>Warnings</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {jobs.length === 0 && (
                   <tr className="border-t border-blue-100">
-                    <td className="py-4 text-slate-500" colSpan={6}>
+                    <td className="py-4 text-slate-500" colSpan={7}>
                       No ingestion jobs yet.
                     </td>
                   </tr>
@@ -443,6 +445,47 @@ export default function DataSettingsPage() {
                       {Array.isArray(job.warnings)
                         ? job.warnings.join("; ")
                         : job.error_message || "--"}
+                    </td>
+                    <td>
+                      {job.job_type === "copycat_source_discovery" &&
+                      getFirstSourceCandidate(job) ? (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="secondary"
+                            disabled={loading}
+                            onClick={() => {
+                              setActiveTab("copycat-source")
+                              setResult({
+                                success: true,
+                                extracted_json: job.extracted_json || {},
+                                confidence: job.confidence,
+                                warnings: Array.isArray(job.warnings)
+                                  ? job.warnings
+                                  : [],
+                              })
+                            }}
+                          >
+                            Review
+                          </Button>
+                          <Button
+                            disabled={loading}
+                            onClick={() =>
+                              createCopycatSourceFromResult({
+                                success: true,
+                                extracted_json: job.extracted_json || {},
+                                confidence: job.confidence,
+                                warnings: Array.isArray(job.warnings)
+                                  ? job.warnings
+                                  : [],
+                              })
+                            }
+                          >
+                            Create
+                          </Button>
+                        </div>
+                      ) : (
+                        "--"
+                      )}
                     </td>
                   </tr>
                 ))}
