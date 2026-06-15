@@ -47,7 +47,9 @@ export async function loadWebSource({
 
     const contentType = response.headers.get("content-type") || ""
     const body = await response.text()
-    const rawTextBody = stripHtml(body)
+    const rawTextBody = shouldPreserveXml(body, contentType)
+      ? body
+      : stripHtml(body)
     const warnings = []
 
     if (!response.ok) {
@@ -81,6 +83,17 @@ export async function loadWebSource({
       ],
     }
   }
+}
+
+function shouldPreserveXml(body: string, contentType: string) {
+  const sample = body.slice(0, 2000).toLowerCase()
+  return (
+    contentType.toLowerCase().includes("xml") ||
+    sample.includes("<informationtable") ||
+    sample.includes("<infotable") ||
+    sample.includes("<nameOfIssuer".toLowerCase()) ||
+    sample.includes("<cusip>")
+  )
 }
 
 export function trimRawText(value: string) {

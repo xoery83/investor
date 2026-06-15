@@ -66,15 +66,26 @@ export async function POST(request: Request) {
       allow_ticker_matching: allowTickerMatching,
     },
   })
+  const parsed13f = parse13fXmlExtraction({
+    rawText: source.raw_text,
+    reportDate: reportDateOverride,
+    sourceUrl: source.source_url,
+    allowTickerMatching,
+  })
+  const extractedJson =
+    parsed13f && parsed13f.holdings.length > 0
+      ? parsed13f
+      : extraction.extracted_json
 
   const normalized = normalizeSnapshotExtraction(
-    extraction.extracted_json,
+    extractedJson,
     reportDateOverride,
     source.source_url
   )
   const warnings = [
     ...source.warnings,
     ...extraction.warnings,
+    ...(parsed13f?.warnings || []),
     ...normalized.warnings,
   ]
 
@@ -98,7 +109,7 @@ export async function POST(request: Request) {
         status: "failed",
         raw_text: source.raw_text,
         raw_payload: source.raw_payload,
-        extracted_json: extraction.extracted_json,
+        extracted_json: extractedJson,
         confidence: extraction.confidence,
         warnings,
         error_message: error.message,
@@ -128,8 +139,8 @@ export async function POST(request: Request) {
     status: snapshot ? "completed" : "needs_review",
     raw_text: source.raw_text,
     raw_payload: source.raw_payload,
-    extracted_json: extraction.extracted_json,
-    confidence: extraction.confidence,
+    extracted_json: extractedJson,
+    confidence: readOptionalNumber(extractedJson.confidence) ?? extraction.confidence,
     warnings,
     source_url: source.source_url,
   })
@@ -139,10 +150,94 @@ export async function POST(request: Request) {
     job_id: job?.id || null,
     snapshot,
     holdings: normalized.holdings,
-    extracted: extraction.extracted_json,
-    confidence: extraction.confidence,
+    extracted: extractedJson,
+    confidence: readOptionalNumber(extractedJson.confidence) ?? extraction.confidence,
     warnings,
   })
+}
+
+function parse13fXmlExtraction({
+  rawText,
+  reportDate,
+  sourceUrl,
+  allowTickerMatching,
+}: {
+  rawText: string
+  reportDate: string | null
+  sourceUrl: string | null
+  allowTickerMatching: boolean
+}) {
+  if (!looksLike13fXml(rawText)) return null
+
+  const blocks = rawText.match(/<infoTable\b[\s\S]*?<\/infoTable>/gi) || []
+  const rawHoldings = blocks.flatMap((block) => {
+    const issuer = readXmlTag(block, "nameOfIssuer")
+    const title = readXmlTag(block, "titleOfClass")
+    const cusip = readXmlTag(block, "cusip")
+    const value = readXmlNumber(block, "value")
+    const shares = readXmlNumber(block, "sshPrnamt")
+    if (!issuer || value === null) return []
+    const matched = allowTickerMatching ? match13fTicker({ cusip, issuer }) : null
+    return [
+      {
+        symbol: matched?.symbol || null,
+        cusip,
+        asset_name: issuer,
+        asset_type: "stock",
+        title_of_class: title,
+        raw_reported_value_thousands: value,
+        reported_value: value * 1000,
+        quantity: shares,
+        currency: "USD",
+        ticker_match_confidence: matched?.confidence ?? null,
+        ticker_match_reason: matched?.reason ?? null,
+      },
+    ]
+  })
+
+  const totalValue = rawHoldings.reduce(
+    (sum, holding) => sum + (holding.reported_value || 0),
+    0
+  )
+  const holdings = rawHoldings
+    .map((holding) => ({
+      ...holding,
+      weight:
+        totalValue > 0
+          ? round((Number(holding.reported_value || 0) / totalValue) * 100)
+          : null,
+    }))
+    .filter((holding) => holding.symbol && holding.weight)
+
+  const unmatched = rawHoldings.filter((holding) => !holding.symbol)
+  const warnings = [
+    "SEC 13F XML was parsed deterministically from infoTable rows.",
+    "13F reported value is provided in thousands of USD and was converted to USD.",
+  ]
+
+  if (unmatched.length > 0) {
+    warnings.push(
+      `${unmatched.length} 13F rows were skipped because no ticker could be matched from CUSIP/issuer.`
+    )
+  }
+
+  if (!reportDate) {
+    warnings.push(
+      "Report date was not found in the XML; provide it manually for a usable snapshot."
+    )
+  }
+
+  return {
+    report_date: reportDate,
+    effective_date: null,
+    source_url: sourceUrl,
+    total_reported_value: totalValue || null,
+    base_currency: "USD",
+    status: "active",
+    holdings,
+    confidence: holdings.length > 0 ? 0.85 : 0.45,
+    warnings,
+  }
 }
 
 function normalizeSnapshotExtraction(
@@ -182,6 +277,148 @@ function normalizeSnapshotExtraction(
     warnings,
   }
 }
+
+function looksLike13fXml(value: string) {
+  const sample = value.slice(0, 10_000).toLowerCase()
+  return (
+    sample.includes("<infotable") &&
+    sample.includes("<nameofissuer") &&
+    sample.includes("<cusip")
+  )
+}
+
+function readXmlTag(block: string, tagName: string) {
+  const escapedTag = tagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = block.match(
+    new RegExp(`<${escapedTag}\\b[^>]*>([\\s\\S]*?)<\\/${escapedTag}>`, "i")
+  )
+  return match ? decodeXml(match[1]).trim() || null : null
+}
+
+function readXmlNumber(block: string, tagName: string) {
+  const text = readXmlTag(block, tagName)
+  if (!text) return null
+  const numeric = Number(text.replace(/,/g, ""))
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+}
+
+function match13fTicker({
+  cusip,
+  issuer,
+}: {
+  cusip: string | null
+  issuer: string
+}) {
+  const byCusip = cusip ? COMMON_13F_CUSIP_SYMBOLS[cusip.toUpperCase()] : null
+  if (byCusip) {
+    return {
+      symbol: byCusip,
+      confidence: 0.98,
+      reason: `Matched by known 13F CUSIP ${cusip}.`,
+    }
+  }
+
+  const normalizedIssuer = issuer.toUpperCase()
+  const byIssuer = COMMON_13F_ISSUER_SYMBOLS.find(([needle]) =>
+    normalizedIssuer.includes(needle)
+  )
+  if (byIssuer) {
+    return {
+      symbol: byIssuer[1],
+      confidence: 0.8,
+      reason: `Matched by issuer name containing "${byIssuer[0]}".`,
+    }
+  }
+
+  return null
+}
+
+const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
+  "002824100": "ABT",
+  "00287Y109": "ABBV",
+  "02079K305": "GOOGL",
+  "023135106": "AMZN",
+  "025816109": "AXP",
+  "037833100": "AAPL",
+  "060505104": "BAC",
+  "084670702": "BRK.B",
+  "110122108": "BMY",
+  "149123101": "CAT",
+  "166764100": "CVX",
+  "17275R102": "CSCO",
+  "172967424": "C",
+  "191216100": "KO",
+  "20030N101": "CMCSA",
+  "254687106": "DIS",
+  "256746108": "DLR",
+  "260003108": "DOV",
+  "263534109": "DD",
+  "278642103": "EBAY",
+  "30303M102": "META",
+  "31428X106": "FDX",
+  "369604301": "GE",
+  "437076102": "HD",
+  "478160104": "JNJ",
+  "500754106": "KHC",
+  "501044101": "KR",
+  "532457108": "LLY",
+  "55261F104": "MTB",
+  "57636Q104": "MA",
+  "594918104": "MSFT",
+  "615369105": "MCO",
+  "67066G104": "NVDA",
+  "674599105": "OXY",
+  "713448108": "PEP",
+  "717081103": "PFE",
+  "742718109": "PG",
+  "75886F107": "REGN",
+  "87612E106": "TGT",
+  "88160R101": "TSLA",
+  "911312106": "UPS",
+  "92343E102": "VZ",
+  "92343V104": "V",
+  "92826C839": "V",
+  "931142103": "WMT",
+  "949746101": "WFC",
+  G0403H108: "AON",
+  G21810109: "CB",
+}
+
+const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
+  ["APPLE", "AAPL"],
+  ["AMERICAN EXPRESS", "AXP"],
+  ["BANK OF AMERICA", "BAC"],
+  ["BERKSHIRE HATHAWAY", "BRK.B"],
+  ["CHEVRON", "CVX"],
+  ["CHUBB", "CB"],
+  ["CITIGROUP", "C"],
+  ["COCA COLA", "KO"],
+  ["COCA-COLA", "KO"],
+  ["KRAFT HEINZ", "KHC"],
+  ["MOODYS", "MCO"],
+  ["MOODY", "MCO"],
+  ["OCCIDENTAL", "OXY"],
+  ["VISA", "V"],
+  ["MASTERCARD", "MA"],
+  ["AMAZON", "AMZN"],
+  ["AON", "AON"],
+  ["CAPITAL ONE", "COF"],
+  ["KROGER", "KR"],
+  ["VERISIGN", "VRSN"],
+  ["DOMINO", "DPZ"],
+  ["POOL", "POOL"],
+  ["DAVITA", "DVA"],
+]
 
 function normalizeHolding(value: unknown) {
   if (!isRecord(value)) return []
