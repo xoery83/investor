@@ -22,6 +22,8 @@ export async function POST(request: Request) {
   const sourceId = readString(body.copycat_source_id)
   const sourceUrl = readString(body.source_url)
   const rawText = readString(body.raw_text)
+  const reportDateOverride = cleanDate(body.report_date)
+  const allowTickerMatching = body.allow_ticker_matching !== false
 
   if (!sourceId) {
     return NextResponse.json(
@@ -60,11 +62,16 @@ export async function POST(request: Request) {
     context: {
       copycat_source: copycatSource,
       source_url: source.source_url,
-      report_date: readString(body.report_date),
+      report_date: reportDateOverride,
+      allow_ticker_matching: allowTickerMatching,
     },
   })
 
-  const normalized = normalizeSnapshotExtraction(extraction.extracted_json)
+  const normalized = normalizeSnapshotExtraction(
+    extraction.extracted_json,
+    reportDateOverride,
+    source.source_url
+  )
   const warnings = [
     ...source.warnings,
     ...extraction.warnings,
@@ -138,8 +145,12 @@ export async function POST(request: Request) {
   })
 }
 
-function normalizeSnapshotExtraction(data: Record<string, unknown>) {
-  const reportDate = cleanDate(data.report_date)
+function normalizeSnapshotExtraction(
+  data: Record<string, unknown>,
+  reportDateFallback: string | null,
+  sourceUrlFallback: string | null
+) {
+  const reportDate = cleanDate(data.report_date) || reportDateFallback
   const holdings = Array.isArray(data.holdings)
     ? data.holdings.flatMap(normalizeHolding)
     : []
@@ -157,7 +168,7 @@ function normalizeSnapshotExtraction(data: Record<string, unknown>) {
       ? {
           report_date: reportDate,
           effective_date: cleanDate(data.effective_date),
-          source_url: readString(data.source_url),
+          source_url: readString(data.source_url) || sourceUrlFallback,
           total_reported_value: readOptionalNumber(data.total_reported_value),
           base_currency: readString(data.base_currency)?.toUpperCase() || "USD",
           status: "active",
@@ -187,7 +198,13 @@ function normalizeHolding(value: unknown) {
       reported_value: readOptionalNumber(value.reported_value),
       quantity: readOptionalNumber(value.quantity),
       currency: readString(value.currency)?.toUpperCase() || "USD",
-      metadata: {},
+      metadata: {
+        cusip: readString(value.cusip),
+        ticker_match_confidence: readOptionalNumber(
+          value.ticker_match_confidence
+        ),
+        ticker_match_reason: readString(value.ticker_match_reason),
+      },
     },
   ]
 }

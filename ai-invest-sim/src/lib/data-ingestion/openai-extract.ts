@@ -91,7 +91,6 @@ function buildSystemPrompt(kind: ExtractorKind) {
 You are a financial data extraction engine for an investment simulation system.
 Return strict JSON only. Do not include markdown.
 Do not invent missing values. Use null when a field is not available.
-Normalize ticker symbols for Yahoo Finance when explicitly present in the source.
 Include confidence from 0 to 1 and warnings as an array of strings.
 `
 
@@ -121,6 +120,9 @@ Return:
   if (kind === "copycat_snapshot") {
     return `${shared}
 Task: extract a holdings snapshot for a copycat source.
+If the source is a 13F XML information table, it may contain issuer names and CUSIPs but no ticker symbols.
+Use context.report_date as the report_date when the source text does not include one.
+Only infer ticker symbols from issuer name/CUSIP when context.allow_ticker_matching is true. If you infer a symbol, include ticker_match_confidence and ticker_match_reason, and add a warning that ticker matching requires admin review.
 Return:
 {
   "report_date": "YYYY-MM-DD" | null,
@@ -132,12 +134,15 @@ Return:
   "holdings": [
     {
       "symbol": string,
+      "cusip": string | null,
       "asset_name": string | null,
       "asset_type": "stock" | "etf" | "fund" | "cash" | "other",
       "weight": number | null,
       "reported_value": number | null,
       "quantity": number | null,
-      "currency": string
+      "currency": string,
+      "ticker_match_confidence": number | null,
+      "ticker_match_reason": string | null
     }
   ],
   "confidence": number,

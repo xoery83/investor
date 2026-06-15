@@ -59,6 +59,8 @@ export default function DataSettingsPage() {
 
   const [snapshotSourceId, setSnapshotSourceId] = useState("")
   const [snapshotUrl, setSnapshotUrl] = useState("")
+  const [snapshotReportDate, setSnapshotReportDate] = useState("")
+  const [allowTickerMatching, setAllowTickerMatching] = useState(true)
   const [snapshotText, setSnapshotText] = useState("")
 
   useEffect(() => {
@@ -341,6 +343,27 @@ export default function DataSettingsPage() {
                   </select>
                 </label>
                 <TextInput label="Snapshot source URL" value={snapshotUrl} onChange={setSnapshotUrl} />
+                <TextInput label="Report date (YYYY-MM-DD)" value={snapshotReportDate} onChange={setSnapshotReportDate} />
+                <label className="flex items-start gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                  <input
+                    type="checkbox"
+                    checked={allowTickerMatching}
+                    onChange={(event) =>
+                      setAllowTickerMatching(event.target.checked)
+                    }
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-800">
+                      Allow AI ticker matching
+                    </span>
+                    <span className="mt-1 block text-sm text-slate-600">
+                      Use this for 13F XML files that contain issuer names and
+                      CUSIPs but no ticker symbols. Matched tickers should still
+                      be reviewed before relying on the snapshot.
+                    </span>
+                  </span>
+                </label>
                 <TextArea label="Optional pasted holdings text" value={snapshotText} onChange={setSnapshotText} />
                 <Button
                   disabled={loading || !snapshotSourceId}
@@ -348,6 +371,8 @@ export default function DataSettingsPage() {
                     runIngestion("/api/admin/data-ingestion/copycat-snapshot", {
                       copycat_source_id: snapshotSourceId,
                       source_url: snapshotUrl,
+                      report_date: snapshotReportDate,
+                      allow_ticker_matching: allowTickerMatching,
                       raw_text: snapshotText,
                     })
                   }
