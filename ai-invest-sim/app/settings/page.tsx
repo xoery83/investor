@@ -295,6 +295,23 @@ export default function SettingsPage() {
             />
           </section>
 
+          {role === "admin" && (
+            <Card className="mb-6 border-blue-200 bg-blue-50/70">
+              <CardHeader>
+                <CardTitle>Data Management</CardTitle>
+                <CardDescription>
+                  Run AI-assisted ingestion for copycat sources, copycat
+                  snapshots, and ETF look-through data.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button asChild>
+                  <Link href="/settings/data">Open Data Ingestion</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
             <Card className="border-border/60 bg-card/55 backdrop-blur-md">
               <CardHeader>

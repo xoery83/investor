@@ -212,32 +212,42 @@ export async function POST(
           ? "capital_deployment"
           : "rebalance"
 
-    let result = runType === "initial_build" || isCapitalDeploymentCandidate
-      ? await runInitialBuildAgent({
-          agent,
-          holdings: holdingsList,
-          valuations: valuationsList,
-          recentRuns: recentRunsList,
-          profile,
-          riskPolicy,
-          workflowConfig,
-          universe,
-          memoryCards,
-        })
-      : diagnostic.manual_required
-      ? buildManualInterventionProposal({ diagnostic })
-      : await runAgent({
-          agent,
-          holdings: holdingsList,
-          valuations: valuationsList,
-          recentRuns: recentRunsList,
-          profile,
-          riskPolicy,
-          workflowConfig,
-          diagnostic,
-          universe,
-          memoryCards,
-        })
+    const copycatProposal =
+      agent.agent_mode === "copycat"
+        ? await buildCopycatSnapshotProposal({
+            agent,
+            holdings: holdingsList,
+          })
+        : null
+
+    let result = copycatProposal
+      ? copycatProposal
+      : runType === "initial_build" || isCapitalDeploymentCandidate
+        ? await runInitialBuildAgent({
+            agent,
+            holdings: holdingsList,
+            valuations: valuationsList,
+            recentRuns: recentRunsList,
+            profile,
+            riskPolicy,
+            workflowConfig,
+            universe,
+            memoryCards,
+          })
+        : diagnostic.manual_required
+          ? buildManualInterventionProposal({ diagnostic })
+          : await runAgent({
+              agent,
+              holdings: holdingsList,
+              valuations: valuationsList,
+              recentRuns: recentRunsList,
+              profile,
+              riskPolicy,
+              workflowConfig,
+              diagnostic,
+              universe,
+              memoryCards,
+            })
 
     let validation = validateTradeProposal({
       agent,
@@ -388,10 +398,12 @@ export async function POST(
       proposal: result,
       riskPolicy,
       evaluationScope:
-        validationMode === "initial_build" ||
-        validationMode === "capital_deployment"
-          ? "initial_proposal"
-          : "rebalance_proposal",
+        agent.agent_mode === "copycat"
+          ? "copycat_snapshot"
+          : validationMode === "initial_build" ||
+              validationMode === "capital_deployment"
+            ? "initial_proposal"
+            : "rebalance_proposal",
       sourceRunId: runRecord.id,
       tradeProposalId: proposalRecord.id,
       initializationVersionId: initialization?.version?.id || null,
@@ -430,6 +442,132 @@ export async function POST(
       },
       { status: 500 }
     )
+  }
+}
+
+async function buildCopycatSnapshotProposal({
+  agent,
+  holdings,
+}: {
+  agent: Record<string, unknown>
+  holdings: Array<Record<string, unknown>>
+}) {
+  const sourceId =
+    typeof agent.copycat_source_id === "string" ? agent.copycat_source_id : null
+
+  if (!sourceId) {
+    throw new Error("Copycat agent is missing copycat_source_id.")
+  }
+
+  const { data: snapshot, error: snapshotError } = await supabase
+    .from("copycat_source_snapshots")
+    .select("*, copycat_sources(*)")
+    .eq("source_id", sourceId)
+    .eq("status", "active")
+    .order("report_date", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (snapshotError || !snapshot) {
+    throw new Error(
+      snapshotError?.message ||
+        "No active copycat snapshot is available for this source."
+    )
+  }
+
+  const { data: sourceHoldings, error: holdingsError } = await supabase
+    .from("copycat_source_holdings")
+    .select("*")
+    .eq("snapshot_id", snapshot.id)
+    .order("weight", { ascending: false })
+
+  if (holdingsError) throw new Error(holdingsError.message)
+
+  const currentWeights = new Map(
+    holdings.map((holding) => [
+      String(holding.symbol || "").toUpperCase(),
+      Number(holding.weight || 0),
+    ])
+  )
+  const targetAllocation = (sourceHoldings || [])
+    .map((holding) => ({
+      symbol: String(holding.symbol || "").toUpperCase(),
+      asset_name: holding.asset_name || null,
+      asset_type: holding.asset_type || "stock",
+      target_weight: roundWeight(Number(holding.weight || 0)),
+    }))
+    .filter((holding) => holding.symbol && holding.target_weight > 0)
+
+  const allocatedWeight = targetAllocation.reduce(
+    (sum, item) => sum + item.target_weight,
+    0
+  )
+  const cashWeight = Math.max(0, roundWeight(100 - allocatedWeight))
+  const allocationWithCash =
+    cashWeight > 0
+      ? [
+          ...targetAllocation,
+          {
+            symbol: "CASH",
+            asset_name: "Cash",
+            asset_type: "cash",
+            target_weight: cashWeight,
+          },
+        ]
+      : targetAllocation
+
+  const suggestedActions = targetAllocation
+    .map((target) => {
+      const currentWeight = currentWeights.get(target.symbol) || 0
+      const delta = roundWeight(target.target_weight - currentWeight)
+      if (Math.abs(delta) < 0.25) return null
+      return {
+        action: delta > 0 ? "BUY" : "SELL",
+        symbol: target.symbol,
+        asset_name: target.asset_name,
+        asset_type: target.asset_type,
+        current_weight: currentWeight,
+        target_weight: target.target_weight,
+        estimated_portfolio_pct_change: Math.abs(delta),
+        rationale:
+          "Align simulated portfolio with the latest active copycat source snapshot.",
+      }
+    })
+    .filter(Boolean)
+
+  const source = snapshot.copycat_sources || {}
+  const reportingLagDays = calculateDateLagDays(snapshot.report_date)
+
+  return {
+    run_type: "copycat_snapshot",
+    proposal_type: "copycat_snapshot",
+    summary: `Track ${source.name || "copycat source"} using the latest active snapshot from ${snapshot.report_date}.`,
+    market_summary:
+      "Copycat agents use reported source holdings rather than discretionary AI stock selection.",
+    risk_analysis:
+      "This proposal may inherit concentration and reporting-lag risks from the tracked manager or fund.",
+    source_snapshot: {
+      source_id: sourceId,
+      source_name: source.name || null,
+      manager_name: source.manager_name || null,
+      report_date: snapshot.report_date,
+      effective_date: snapshot.effective_date,
+      reporting_lag_days: reportingLagDays,
+      source_url: snapshot.source_url || source.source_url || null,
+    },
+    suggested_actions: suggestedActions,
+    target_allocation: allocationWithCash,
+    risks: [
+      "Copycat holdings can be delayed relative to the manager's current portfolio.",
+      "Concentrated source portfolios may fail this agent's standard risk policy.",
+      "Reported holdings may exclude cash, derivatives, shorts, or private positions.",
+    ],
+    key_assumptions: [
+      "Latest active snapshot is the authoritative source for this run.",
+      "Weights are interpreted as target portfolio weights.",
+    ],
+    allocation_comment:
+      "The target allocation mirrors the latest active copycat snapshot and reserves residual weight as cash when holdings do not sum to 100%.",
   }
 }
 
@@ -564,4 +702,18 @@ async function createInvestmentUniverse({
   if (error || !data) return null
 
   return data as AgentInvestmentUniverse
+}
+
+function calculateDateLagDays(dateValue: unknown) {
+  if (typeof dateValue !== "string" || !dateValue) return null
+  const date = new Date(`${dateValue}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return null
+  return Math.max(
+    0,
+    Math.round((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24))
+  )
+}
+
+function roundWeight(value: number) {
+  return Math.round(value * 10000) / 10000
 }
