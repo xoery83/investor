@@ -72,10 +72,11 @@ export async function POST(request: Request) {
     sourceUrl: source.source_url,
     allowTickerMatching,
   })
-  const extractedJson =
-    parsed13f && parsed13f.holdings.length > 0
-      ? parsed13f
-      : extraction.extracted_json
+  const extractionChoice = chooseSnapshotExtraction({
+    parsed13f,
+    modelExtraction: extraction.extracted_json,
+  })
+  const extractedJson = extractionChoice.extractedJson
 
   const normalized = normalizeSnapshotExtraction(
     extractedJson,
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
     ...source.warnings,
     ...extraction.warnings,
     ...(parsed13f?.warnings || []),
+    ...extractionChoice.warnings,
     ...normalized.warnings,
   ]
 
@@ -122,6 +124,15 @@ export async function POST(request: Request) {
     }
 
     snapshot = data
+    const { error: clearHoldingsError } = await serverSupabase
+      .from("copycat_source_holdings")
+      .delete()
+      .eq("snapshot_id", data.id)
+
+    if (clearHoldingsError) {
+      warnings.push(clearHoldingsError.message)
+    }
+
     const rows = normalized.holdings.map((holding) => ({
       snapshot_id: data.id,
       ...holding,
@@ -169,7 +180,9 @@ function parse13fXmlExtraction({
 }) {
   if (!looksLike13fXml(rawText)) return null
 
-  const blocks = rawText.match(/<infoTable\b[\s\S]*?<\/infoTable>/gi) || []
+  const blocks =
+    rawText.match(/<(?:\w+:)?infoTable\b[\s\S]*?<\/(?:\w+:)?infoTable>/gi) ||
+    []
   const rawHoldings = blocks.flatMap((block) => {
     const issuer = readXmlTag(block, "nameOfIssuer")
     const title = readXmlTag(block, "titleOfClass")
@@ -199,7 +212,10 @@ function parse13fXmlExtraction({
     (sum, holding) => sum + (holding.reported_value || 0),
     0
   )
-  const holdings = rawHoldings
+  const matchedValue = rawHoldings
+    .filter((holding) => holding.symbol)
+    .reduce((sum, holding) => sum + (holding.reported_value || 0), 0)
+  const holdings = aggregate13fHoldings(rawHoldings)
     .map((holding) => ({
       ...holding,
       weight:
@@ -234,10 +250,132 @@ function parse13fXmlExtraction({
     total_reported_value: totalValue || null,
     base_currency: "USD",
     status: "active",
+    metadata: {
+      parser: "deterministic_13f_xml",
+      raw_rows: rawHoldings.length,
+      matched_rows: rawHoldings.length - unmatched.length,
+      unmatched_rows: unmatched.length,
+      matched_reported_value_pct:
+        totalValue > 0 ? round((matchedValue / totalValue) * 100) : null,
+    },
     holdings,
     confidence: holdings.length > 0 ? 0.85 : 0.45,
     warnings,
   }
+}
+
+function chooseSnapshotExtraction({
+  parsed13f,
+  modelExtraction,
+}: {
+  parsed13f: Record<string, unknown> | null
+  modelExtraction: Record<string, unknown>
+}) {
+  if (!parsed13f || getHoldingCount(parsed13f) === 0) {
+    return { extractedJson: modelExtraction, warnings: [] }
+  }
+
+  const parsedCount = getHoldingCount(parsed13f)
+  const modelCount = getHoldingCount(modelExtraction)
+  const parsedWeight = getEffectiveHoldingWeightSum(parsed13f)
+  const modelWeight = getEffectiveHoldingWeightSum(modelExtraction)
+  const parsedMetadata = isRecord(parsed13f.metadata) ? parsed13f.metadata : {}
+  const matchedReportedValuePct = readOptionalNumber(
+    parsedMetadata.matched_reported_value_pct
+  )
+  const deterministicCoverageIsLow =
+    (matchedReportedValuePct !== null && matchedReportedValuePct < 80) ||
+    (parsedWeight > 0 && parsedWeight < 80)
+  const modelLooksMoreComplete =
+    modelCount > parsedCount && (modelWeight >= parsedWeight || parsedWeight < 80)
+
+  if (deterministicCoverageIsLow && modelLooksMoreComplete) {
+    return {
+      extractedJson: modelExtraction,
+      warnings: [
+        `Deterministic 13F parser matched ${parsedCount} holdings / ${round(
+          parsedWeight
+        )}% weight; OpenAI extraction returned ${modelCount} holdings / ${round(
+          modelWeight
+        )}% weight, so the model extraction was used for this snapshot.`,
+      ],
+    }
+  }
+
+  return { extractedJson: parsed13f, warnings: [] }
+}
+
+function getHoldingCount(value: Record<string, unknown>) {
+  return Array.isArray(value.holdings) ? value.holdings.length : 0
+}
+
+function getHoldingWeightSum(value: Record<string, unknown>) {
+  if (!Array.isArray(value.holdings)) return 0
+  return value.holdings.reduce((sum, item) => {
+    if (!isRecord(item)) return sum
+    return sum + Number(item.weight || 0)
+  }, 0)
+}
+
+function getEffectiveHoldingWeightSum(value: Record<string, unknown>) {
+  const weight = getHoldingWeightSum(value)
+  return weight > 0 && weight <= 1.5 ? weight * 100 : weight
+}
+
+function aggregate13fHoldings(
+  holdings: Array<{
+    symbol: string | null
+    cusip: string | null
+    asset_name: string
+    asset_type: string
+    title_of_class: string | null
+    raw_reported_value_thousands: number
+    reported_value: number
+    quantity: number | null
+    currency: string
+    ticker_match_confidence: number | null
+    ticker_match_reason: string | null
+  }>
+) {
+  const bySymbol = new Map<string, (typeof holdings)[number] & { cusips: string[] }>()
+
+  for (const holding of holdings) {
+    if (!holding.symbol) continue
+    const existing = bySymbol.get(holding.symbol)
+    if (!existing) {
+      bySymbol.set(holding.symbol, {
+        ...holding,
+        cusips: holding.cusip ? [holding.cusip] : [],
+      })
+      continue
+    }
+
+    existing.reported_value += holding.reported_value
+    existing.raw_reported_value_thousands += holding.raw_reported_value_thousands
+    existing.quantity =
+      existing.quantity !== null || holding.quantity !== null
+        ? Number(existing.quantity || 0) + Number(holding.quantity || 0)
+        : null
+    if (holding.cusip && !existing.cusips.includes(holding.cusip)) {
+      existing.cusips.push(holding.cusip)
+    }
+    existing.ticker_match_confidence = Math.max(
+      Number(existing.ticker_match_confidence || 0),
+      Number(holding.ticker_match_confidence || 0)
+    )
+    existing.ticker_match_reason = [
+      existing.ticker_match_reason,
+      holding.ticker_match_reason,
+    ]
+      .filter(Boolean)
+      .filter((value, index, array) => array.indexOf(value) === index)
+      .join(" | ")
+  }
+
+  return Array.from(bySymbol.values()).map(({ cusips, ...holding }) => ({
+    ...holding,
+    cusip: cusips.join(", ") || holding.cusip,
+  }))
 }
 
 function normalizeSnapshotExtraction(
@@ -246,10 +384,12 @@ function normalizeSnapshotExtraction(
   sourceUrlFallback: string | null
 ) {
   const reportDate = cleanDate(data.report_date) || reportDateFallback
-  const holdings = Array.isArray(data.holdings)
+  const rawHoldings = Array.isArray(data.holdings)
     ? data.holdings.flatMap(normalizeHolding)
     : []
-  const warnings = []
+  const normalizedWeights = normalizeHoldingWeights(rawHoldings, data)
+  const holdings = normalizedWeights.holdings
+  const warnings = [...normalizedWeights.warnings]
   const totalWeight = holdings.reduce((sum, item) => sum + item.weight, 0)
 
   if (!reportDate) warnings.push("Report date is missing or invalid.")
@@ -268,6 +408,7 @@ function normalizeSnapshotExtraction(
           base_currency: readString(data.base_currency)?.toUpperCase() || "USD",
           status: "active",
           metadata: {
+            ...(isRecord(data.metadata) ? data.metadata : {}),
             extraction_confidence: readOptionalNumber(data.confidence),
             total_weight: round(totalWeight),
           },
@@ -278,19 +419,91 @@ function normalizeSnapshotExtraction(
   }
 }
 
+function normalizeHoldingWeights(
+  holdings: ReturnType<typeof normalizeHolding> extends Array<infer T> ? T[] : never,
+  data: Record<string, unknown>
+) {
+  const totalWeight = holdings.reduce((sum, item) => sum + item.weight, 0)
+  const warnings: string[] = []
+
+  if (holdings.length === 0 || totalWeight <= 0) {
+    return { holdings, warnings }
+  }
+
+  const metadata = isRecord(data.metadata) ? data.metadata : {}
+  const parser = readString(metadata.parser)
+  const matchedReportedValuePct = readOptionalNumber(
+    metadata.matched_reported_value_pct
+  )
+  const deterministicPartialMatch =
+    parser === "deterministic_13f_xml" &&
+    matchedReportedValuePct !== null &&
+    matchedReportedValuePct < 80
+
+  if (totalWeight <= 1.5) {
+    warnings.push(
+      `Holding weights appeared to be fractional (${round(
+        totalWeight
+      )}); scaled them to percentage units.`
+    )
+    return {
+      holdings: holdings.map((holding) => ({
+        ...holding,
+        weight: round(holding.weight * 100),
+      })),
+      warnings,
+    }
+  }
+
+  const reportedValueHoldings = holdings.filter(
+    (holding) =>
+      typeof holding.reported_value === "number" && holding.reported_value > 0
+  )
+  const reportedValueSum = reportedValueHoldings.reduce(
+    (sum, holding) => sum + Number(holding.reported_value || 0),
+    0
+  )
+
+  if (
+    !deterministicPartialMatch &&
+    reportedValueSum > 0 &&
+    reportedValueHoldings.length >= Math.max(1, holdings.length * 0.7) &&
+    (totalWeight < 80 || totalWeight > 110)
+  ) {
+    warnings.push(
+      "Holding weights were recomputed from reported values because extracted weights were not near 100%."
+    )
+    return {
+      holdings: holdings.map((holding) => ({
+        ...holding,
+        weight:
+          typeof holding.reported_value === "number" && holding.reported_value > 0
+            ? round((holding.reported_value / reportedValueSum) * 100)
+            : holding.weight,
+      })),
+      warnings,
+    }
+  }
+
+  return { holdings, warnings }
+}
+
 function looksLike13fXml(value: string) {
-  const sample = value.slice(0, 10_000).toLowerCase()
+  const sample = value.slice(0, 200_000).toLowerCase()
   return (
-    sample.includes("<infotable") &&
-    sample.includes("<nameofissuer") &&
-    sample.includes("<cusip")
+    /<(?:\w+:)?infotable\b/i.test(sample) &&
+    /<(?:\w+:)?nameofissuer\b/i.test(sample) &&
+    /<(?:\w+:)?cusip\b/i.test(sample)
   )
 }
 
 function readXmlTag(block: string, tagName: string) {
   const escapedTag = tagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const match = block.match(
-    new RegExp(`<${escapedTag}\\b[^>]*>([\\s\\S]*?)<\\/${escapedTag}>`, "i")
+    new RegExp(
+      `<(?:\\w+:)?${escapedTag}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${escapedTag}>`,
+      "i"
+    )
   )
   return match ? decodeXml(match[1]).trim() || null : null
 }
@@ -344,76 +557,211 @@ function match13fTicker({
 }
 
 const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
+  "000899104": "ADMA",
   "002824100": "ABT",
   "00287Y109": "ABBV",
+  "013872106": "AA",
   "02079K305": "GOOGL",
+  "02079K107": "GOOG",
+  "020398707": "ALM",
   "023135106": "AMZN",
   "025816109": "AXP",
   "037833100": "AAPL",
+  "042068205": "ARM",
   "060505104": "BAC",
+  "07782B104": "BLTE",
   "084670702": "BRK.B",
+  "093712107": "BE",
   "110122108": "BMY",
+  "11135F101": "AVGO",
+  "11271J107": "BN",
+  "142152107": "CAI",
   "149123101": "CAT",
+  "15101Q207": "CLS",
   "166764100": "CVX",
   "17275R102": "CSCO",
   "172967424": "C",
+  "185899101": "CLF",
+  "18915M107": "NET",
   "191216100": "KO",
+  "19247G107": "COHR",
   "20030N101": "CMCSA",
+  "22266T109": "CPNG",
+  "23306J309": "DBVT",
+  "234264109": "DAKT",
   "254687106": "DIS",
   "256746108": "DLR",
   "260003108": "DOV",
   "263534109": "DD",
   "278642103": "EBAY",
+  "278768106": "SATS",
   "30303M102": "META",
   "31428X106": "FDX",
+  "349381103": "FIGR",
   "369604301": "GE",
+  "42806J700": "HTZ",
   "437076102": "HD",
+  "444859102": "HUM",
+  "44267T102": "HHH",
+  "457669307": "INSM",
+  "458140100": "INTC",
   "478160104": "JNJ",
   "500754106": "KHC",
   "501044101": "KR",
+  "518415104": "LSCC",
   "532457108": "LLY",
+  "55024U109": "LITE",
   "55261F104": "MTB",
   "57636Q104": "MA",
+  "58733R102": "MELI",
   "594918104": "MSFT",
+  "595112103": "MU",
   "615369105": "MCO",
+  "632307104": "NTRA",
+  "46428R107": "GSG",
+  "464287655": "IWM",
+  "466313103": "JBL",
   "67066G104": "NVDA",
+  "67080N101": "NUVB",
   "674599105": "OXY",
+  "68062P106": "OLMA",
+  "68404L201": "OPCH",
   "713448108": "PEP",
   "717081103": "PFE",
   "742718109": "PG",
+  "74366E102": "PTGX",
+  "74623V103": "PCT",
+  "74743L100": "Q",
+  "76131D103": "QSR",
+  "76155X100": "RVMD",
   "75886F107": "REGN",
+  "77543R102": "ROKU",
+  "78462F103": "SPY",
+  "80004C200": "SNDK",
+  "81141R100": "SE",
+  "812215200": "SEG",
+  "83443Q103": "SOLS",
+  "84265V105": "SCCO",
+  "861012102": "STM",
+  "86384P109": "STUB",
+  "874039100": "TSM",
   "87612E106": "TGT",
+  "881624209": "TEVA",
   "88160R101": "TSLA",
+  "90353T100": "UBER",
+  "90138F102": "TWLO",
+  "90184D100": "TWST",
+  "910047109": "UAL",
   "911312106": "UPS",
+  "91332U101": "U",
+  "92837L109": "VIST",
+  "929740108": "WAB",
   "92343E102": "VZ",
   "92343V104": "V",
   "92826C839": "V",
   "931142103": "WMT",
   "949746101": "WFC",
+  "960413102": "WLK",
+  "980745103": "WWD",
+  "98420N105": "XENE",
+  "984245100": "YPF",
   G0403H108: "AON",
   G21810109: "CB",
+  G0896C103: "TBBB",
+  G25508105: "CRH",
+  G54950103: "LIN",
+  G7997R103: "STX",
+  N4732M103: "JBS",
+  N53745100: "LYB",
+  N62509109: "NAMS",
+  Y95308105: "WVE",
 }
 
 const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
   ["APPLE", "AAPL"],
+  ["ADMA BIOLOGICS", "ADMA"],
+  ["ALCOA", "AA"],
+  ["ALMONTY", "ALM"],
   ["AMERICAN EXPRESS", "AXP"],
+  ["ARM HOLDINGS", "ARM"],
   ["BANK OF AMERICA", "BAC"],
+  ["BBB FOODS", "TBBB"],
+  ["BELITE BIO", "BLTE"],
   ["BERKSHIRE HATHAWAY", "BRK.B"],
+  ["BLOOM ENERGY", "BE"],
+  ["BROADCOM", "AVGO"],
+  ["CARIS LIFE", "CAI"],
+  ["CELESTICA", "CLS"],
   ["CHEVRON", "CVX"],
   ["CHUBB", "CB"],
   ["CITIGROUP", "C"],
+  ["CLEVELAND-CLIFFS", "CLF"],
+  ["CLOUDFLARE", "NET"],
+  ["COHERENT", "COHR"],
   ["COCA COLA", "KO"],
   ["COCA-COLA", "KO"],
+  ["COUPANG", "CPNG"],
+  ["DAKTRONICS", "DAKT"],
+  ["DBV TECHNOLOGIES", "DBVT"],
+  ["ECHOSTAR", "SATS"],
+  ["FIGURE TECHNOLOGY", "FIGR"],
   ["KRAFT HEINZ", "KHC"],
+  ["HUMANA", "HUM"],
+  ["INSMED", "INSM"],
+  ["INTEL", "INTC"],
+  ["JABIL", "JBL"],
+  ["JBS", "JBS"],
+  ["LATTICE SEMICONDUCTOR", "LSCC"],
+  ["LINDE", "LIN"],
+  ["LUMENTUM", "LITE"],
+  ["LYONDELLBASELL", "LYB"],
+  ["MERCADOLIBRE", "MELI"],
+  ["MICRON", "MU"],
   ["MOODYS", "MCO"],
   ["MOODY", "MCO"],
+  ["NATERA", "NTRA"],
+  ["NEWAMSTERDAM", "NAMS"],
+  ["NUVATION BIO", "NUVB"],
   ["OCCIDENTAL", "OXY"],
+  ["OLEMA", "OLMA"],
+  ["OPTION CARE", "OPCH"],
+  ["PROTAGONIST", "PTGX"],
+  ["PURECYCLE", "PCT"],
+  ["QNITY", "Q"],
   ["VISA", "V"],
   ["MASTERCARD", "MA"],
   ["AMAZON", "AMZN"],
   ["AON", "AON"],
+  ["BROOKFIELD", "BN"],
   ["CAPITAL ONE", "COF"],
+  ["HERTZ", "HTZ"],
+  ["HOWARD HUGHES", "HHH"],
   ["KROGER", "KR"],
+  ["RESTAURANT BRANDS", "QSR"],
+  ["REVOLUTION MEDICINES", "RVMD"],
+  ["ROKU", "ROKU"],
+  ["SANDISK", "SNDK"],
+  ["SEA LTD", "SE"],
+  ["SEAGATE", "STX"],
+  ["SOUTHERN COPPER", "SCCO"],
+  ["STMICROELECTRONICS", "STM"],
+  ["STUBHUB", "STUB"],
+  ["TAIWAN SEMICONDUCTOR", "TSM"],
+  ["TEVA", "TEVA"],
+  ["TWILIO", "TWLO"],
+  ["TWIST BIOSCIENCE", "TWST"],
+  ["UNITED AIRLS", "UAL"],
+  ["UNITED AIRLINES", "UAL"],
+  ["UNITY SOFTWARE", "U"],
+  ["VISTA ENERGY", "VIST"],
+  ["WABTEC", "WAB"],
+  ["WAVE LIFE", "WVE"],
+  ["WESTLAKE", "WLK"],
+  ["WOODWARD", "WWD"],
+  ["XENON PHARMACEUTICALS", "XENE"],
+  ["YPF", "YPF"],
+  ["SEAPORT", "SEG"],
+  ["UBER", "UBER"],
   ["VERISIGN", "VRSN"],
   ["DOMINO", "DPZ"],
   ["POOL", "POOL"],

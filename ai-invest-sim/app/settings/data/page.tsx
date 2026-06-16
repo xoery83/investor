@@ -17,7 +17,10 @@ type CopycatSource = {
   id: string
   name: string
   manager_name: string | null
+  source_url?: string | null
+  source_type?: string | null
   status: string
+  metadata?: Record<string, unknown> | null
 }
 
 type IngestionJob = {
@@ -47,6 +50,7 @@ export default function DataSettingsPage() {
   const [error, setError] = useState("")
   const [result, setResult] = useState<unknown>(null)
   const [sourceWriteStatus, setSourceWriteStatus] = useState("")
+  const [discoveryStatus, setDiscoveryStatus] = useState("")
 
   const [etfSymbol, setEtfSymbol] = useState("KWEB")
   const [etfUrl, setEtfUrl] = useState("")
@@ -147,6 +151,82 @@ export default function DataSettingsPage() {
       await refreshJobs()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ingestion failed.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function discoverAndExtractLatestSnapshot() {
+    if (!token || !snapshotSourceId) return
+
+    setLoading(true)
+    setError("")
+    setResult(null)
+    setSourceWriteStatus("")
+    setDiscoveryStatus("Finding latest SEC 13F filing...")
+
+    try {
+      const discoveryRes = await fetch(
+        "/api/admin/data-ingestion/copycat-latest-snapshot",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            copycat_source_id: snapshotSourceId,
+          }),
+        }
+      )
+      const discovery = await discoveryRes.json()
+      if (!discovery.success) {
+        setError(discovery.error || "Failed to discover latest SEC snapshot.")
+        setResult(discovery)
+        await refreshJobs()
+        return
+      }
+
+      const discoveredUrl = readString(discovery.snapshot_url) || ""
+      const discoveredReportDate = readString(discovery.report_date) || ""
+      setSnapshotUrl(discoveredUrl)
+      setSnapshotReportDate(discoveredReportDate)
+      setDiscoveryStatus("Latest filing found. Extracting holdings snapshot...")
+
+      const extractRes = await fetch(
+        "/api/admin/data-ingestion/copycat-snapshot",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            copycat_source_id: snapshotSourceId,
+            source_url: discoveredUrl,
+            report_date: discoveredReportDate,
+            allow_ticker_matching: allowTickerMatching,
+            raw_text: "",
+          }),
+        }
+      )
+      const extraction = await extractRes.json()
+      setResult({
+        ...extraction,
+        latest_snapshot_discovery: discovery,
+      })
+      if (!extraction.success) {
+        setError(extraction.error || "Latest snapshot extraction failed.")
+      } else {
+        setDiscoveryStatus("Latest SEC 13F snapshot extracted and saved.")
+      }
+      await refreshJobs()
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to discover and extract latest snapshot."
+      )
     } finally {
       setLoading(false)
     }
@@ -379,6 +459,28 @@ export default function DataSettingsPage() {
                 >
                   {loading ? "Extracting..." : "Extract Snapshot"}
                 </Button>
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                  <p className="text-sm font-medium text-slate-800">
+                    SEC 13F auto discovery
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Find the latest 13F information table for this source, then
+                    extract and save it as a copycat snapshot.
+                  </p>
+                  <Button
+                    className="mt-3"
+                    variant="secondary"
+                    disabled={loading || !snapshotSourceId}
+                    onClick={discoverAndExtractLatestSnapshot}
+                  >
+                    {loading ? "Working..." : "Find Latest SEC 13F & Extract"}
+                  </Button>
+                  {discoveryStatus && (
+                    <p className="mt-2 text-sm text-blue-700">
+                      {discoveryStatus}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -413,6 +515,20 @@ export default function DataSettingsPage() {
                 />
               )}
             {activeTab === "copycat-snapshot" &&
+              getLatestSnapshotDiscovery(result) &&
+              getSnapshotHoldings(result).length === 0 && (
+                <LatestSnapshotDiscoveryReview
+                  discovery={getLatestSnapshotDiscovery(result)!}
+                  warnings={readWarnings(
+                    isRecord(result) ? result.warnings : null
+                  )}
+                />
+              )}
+            {activeTab === "copycat-snapshot" &&
+              !(
+                getLatestSnapshotDiscovery(result) &&
+                getSnapshotHoldings(result).length === 0
+              ) &&
               getSnapshotExtraction(result) && (
                 <CopycatSnapshotReview
                   result={result}
@@ -697,8 +813,8 @@ function CopycatSourceCandidateReview({
             Review warnings
           </p>
           <ul className="space-y-1 text-sm text-amber-800">
-            {warnings.slice(0, 4).map((warning) => (
-              <li key={warning}>- {warning}</li>
+            {warnings.slice(0, 4).map((warning, index) => (
+              <li key={`${warning}-${index}`}>- {warning}</li>
             ))}
           </ul>
         </div>
@@ -722,8 +838,9 @@ function CopycatSnapshotReview({
 }) {
   const extracted = getSnapshotExtraction(result)
   const holdings = getSnapshotHoldings(result)
-  const snapshotWritten = isRecord(result) && Boolean(result.snapshot)
   const jobStatus = isRecord(result) ? readString(result.job_status) : null
+  const snapshotWritten =
+    (isRecord(result) && Boolean(result.snapshot)) || jobStatus === "completed"
   const reportDate = extracted ? readString(extracted.report_date) : null
   const effectiveDate = extracted ? readString(extracted.effective_date) : null
   const baseCurrency = extracted
@@ -835,8 +952,79 @@ function CopycatSnapshotReview({
             Review warnings
           </p>
           <ul className="space-y-1 text-sm text-amber-800">
-            {warnings.slice(0, 5).map((warning) => (
-              <li key={warning}>- {warning}</li>
+            {warnings.slice(0, 5).map((warning, index) => (
+              <li key={`${warning}-${index}`}>- {warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LatestSnapshotDiscoveryReview({
+  discovery,
+  warnings,
+}: {
+  discovery: Record<string, unknown>
+  warnings: string[]
+}) {
+  const nestedDiscovery = isRecord(discovery.discovery)
+    ? discovery.discovery
+    : discovery
+  const snapshotUrl = readString(nestedDiscovery.snapshot_url)
+  return (
+    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+        Latest SEC 13F Found
+      </p>
+      <h3 className="mt-1 text-lg font-semibold text-slate-900">
+        {readString(nestedDiscovery.accession_number) || "Latest filing"}
+      </h3>
+      <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+        <div>
+          <dt className="font-medium text-slate-500">Report Date</dt>
+          <dd className="mt-1 text-slate-900">
+            {readString(nestedDiscovery.report_date) || "--"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Filing Date</dt>
+          <dd className="mt-1 text-slate-900">
+            {readString(nestedDiscovery.filing_date) || "--"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">Info Table</dt>
+          <dd className="mt-1 text-slate-900">
+            {readString(nestedDiscovery.info_table_document) || "--"}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium text-slate-500">CIK</dt>
+          <dd className="mt-1 text-slate-900">
+            {readString(discovery.cik) || "--"}
+          </dd>
+        </div>
+      </dl>
+      {snapshotUrl && (
+        <a
+          className="mt-4 block break-all text-sm font-medium text-blue-700"
+          href={snapshotUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {snapshotUrl}
+        </a>
+      )}
+      {warnings.length > 0 && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-white p-3">
+          <p className="mb-2 text-sm font-medium text-amber-900">
+            Review warnings
+          </p>
+          <ul className="space-y-1 text-sm text-amber-800">
+            {warnings.slice(0, 5).map((warning, index) => (
+              <li key={`${warning}-${index}`}>- {warning}</li>
             ))}
           </ul>
         </div>
@@ -853,6 +1041,21 @@ function getFirstSourceCandidate(value: unknown) {
   }
   const candidate = extracted.source_candidates.find(isRecord)
   return candidate || null
+}
+
+function getLatestSnapshotDiscovery(value: unknown) {
+  if (!isRecord(value)) return null
+  if (isRecord(value.latest_snapshot_discovery)) {
+    return value.latest_snapshot_discovery
+  }
+  const extracted = value.extracted_json
+  if (
+    isRecord(extracted) &&
+    readString(extracted.operation) === "latest_snapshot_discovery"
+  ) {
+    return extracted
+  }
+  return null
 }
 
 function getSnapshotExtraction(value: unknown) {

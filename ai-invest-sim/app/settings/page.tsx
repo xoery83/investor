@@ -9,6 +9,7 @@ import {
   CreditCard,
   KeyRound,
   LogOut,
+  RefreshCw,
   Shield,
   UserRound,
 } from "lucide-react"
@@ -68,6 +69,15 @@ type PortfolioPayload = {
   }
 }
 
+type AdminRefreshPayload = {
+  success: boolean
+  processed?: number
+  updated?: number
+  skipped?: number
+  failed?: number
+  error?: string
+}
+
 export default function SettingsPage() {
   const [auth, setAuth] = useState<AuthMePayload | null>(null)
   const [agents, setAgents] = useState<AgentListItem[]>([])
@@ -75,6 +85,7 @@ export default function SettingsPage() {
   const [provider, setProvider] = useState("Unknown")
   const [loading, setLoading] = useState(true)
   const [savingName, setSavingName] = useState(false)
+  const [refreshingValuations, setRefreshingValuations] = useState(false)
   const [displayName, setDisplayName] = useState("")
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
@@ -181,6 +192,39 @@ export default function SettingsPage() {
     }
 
     setSavingName(false)
+  }
+
+  async function refreshAllValuations() {
+    setRefreshingValuations(true)
+    setError("")
+    setNotice("")
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData.session?.access_token
+
+    if (!token) {
+      setError("Please log in before refreshing valuations.")
+      setRefreshingValuations(false)
+      return
+    }
+
+    const res = await fetch("/api/admin/refresh-valuations", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json().catch(() => ({}))) as AdminRefreshPayload
+
+    if (!res.ok || !data.success) {
+      setError(data.error || "Failed to refresh agent valuations.")
+    } else {
+      setNotice(
+        `Valuation refresh completed: ${data.updated || 0} updated, ${
+          data.skipped || 0
+        } skipped, ${data.failed || 0} failed.`
+      )
+    }
+
+    setRefreshingValuations(false)
   }
 
   return (
@@ -298,15 +342,31 @@ export default function SettingsPage() {
           {role === "admin" && (
             <Card className="mb-6 border-blue-200 bg-blue-50/70">
               <CardHeader>
-                <CardTitle>Data Management</CardTitle>
+                <CardTitle>Admin Operations</CardTitle>
                 <CardDescription>
-                  Run AI-assisted ingestion for copycat sources, copycat
-                  snapshots, and ETF look-through data.
+                  Run data ingestion and force-refresh active agent valuations
+                  when cron frequency is limited.
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-wrap gap-3">
                 <Button asChild>
                   <Link href="/settings/data">Open Data Ingestion</Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={refreshAllValuations}
+                  disabled={refreshingValuations}
+                  className="gap-2"
+                >
+                  <RefreshCw
+                    className={
+                      refreshingValuations ? "h-4 w-4 animate-spin" : "h-4 w-4"
+                    }
+                  />
+                  {refreshingValuations
+                    ? "Refreshing valuations..."
+                    : "Refresh all valuations"}
                 </Button>
               </CardContent>
             </Card>

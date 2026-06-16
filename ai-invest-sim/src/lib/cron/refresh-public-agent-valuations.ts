@@ -13,8 +13,14 @@ const MAX_AGENTS_PER_RUN = 25
 
 export async function refreshPublicAgentValuationsCron({
   supabase,
+  force = false,
+  skipPublicationReadiness = false,
+  maxAgents = MAX_AGENTS_PER_RUN,
 }: {
   supabase: SupabaseClient
+  force?: boolean
+  skipPublicationReadiness?: boolean
+  maxAgents?: number
 }) {
   const { data: agents, error } = await supabase
     .from("agents")
@@ -22,14 +28,21 @@ export async function refreshPublicAgentValuationsCron({
     .eq("lifecycle_status", "active")
     .eq("is_active", true)
     .order("updated_at", { ascending: true })
-    .limit(MAX_AGENTS_PER_RUN)
+    .limit(maxAgents)
 
   if (error) throw new Error(error.message)
 
   const results = []
 
   for (const agent of (agents || []) as Agent[]) {
-    results.push(await refreshAgentValuation({ supabase, agent }))
+    results.push(
+      await refreshAgentValuation({
+        supabase,
+        agent,
+        force,
+        skipPublicationReadiness,
+      })
+    )
   }
 
   return results
@@ -38,12 +51,16 @@ export async function refreshPublicAgentValuationsCron({
 async function refreshAgentValuation({
   supabase,
   agent,
+  force,
+  skipPublicationReadiness,
 }: {
   supabase: SupabaseClient
   agent: Agent
+  force: boolean
+  skipPublicationReadiness: boolean
 }) {
   try {
-    if (agent.visibility === "public") {
+    if (agent.visibility === "public" && !skipPublicationReadiness) {
       const readiness = await validateAgentPublicationReadiness({
         supabase,
         agent,
@@ -78,7 +95,7 @@ async function refreshAgentValuation({
     const previousValuation =
       ((previousValuations || [])[0] as AgentValuation | undefined) || null
 
-    if (previousValuation && isFreshSnapshot(previousValuation)) {
+    if (!force && previousValuation && isFreshSnapshot(previousValuation)) {
       return {
         agent_id: agent.id,
         status: "skipped",

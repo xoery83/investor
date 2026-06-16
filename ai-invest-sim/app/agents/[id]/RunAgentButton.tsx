@@ -8,12 +8,14 @@ import { supabase } from "../../../src/lib/supabase"
 export default function RunAgentButton({
   agentId,
   initialBuildMode = false,
+  agentMode = "ai_manager",
   onRunStarted,
   onRunCompleted,
   onRunFinished,
 }: {
   agentId: string
   initialBuildMode?: boolean
+  agentMode?: "ai_manager" | "copycat"
   onRunStarted?: (runType: AgentRunType) => void
   onRunCompleted?: (payload: {
     run?: unknown
@@ -80,7 +82,15 @@ export default function RunAgentButton({
   return (
     <div className="flex flex-wrap items-start gap-2">
       <RunButton
-        label={initialBuildMode ? "Initial Build" : "Rebalance"}
+        label={
+          agentMode === "copycat"
+            ? initialBuildMode
+              ? "Build from Snapshot"
+              : "Sync Snapshot"
+            : initialBuildMode
+              ? "Initial Build"
+              : "Rebalance"
+        }
         runType={initialBuildMode ? "initial_build" : "rebalance"}
         loadingType={loadingType}
         onRun={handleRun}

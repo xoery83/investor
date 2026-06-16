@@ -260,6 +260,7 @@ export default function AgentDashboardClient({
               <RunAgentButton
                 agentId={agent.id}
                 initialBuildMode={initialBuildMode}
+                agentMode={agent.agent_mode === "copycat" ? "copycat" : "ai_manager"}
                 onRunStarted={(runType) => {
                   setPendingRunType(runType)
                   window.setTimeout(() => {
@@ -943,9 +944,9 @@ function RunResearchCard({ run }: { run: AgentRun }) {
             Key Risks
           </p>
           <div className="flex flex-wrap gap-2">
-            {risks.map((risk) => (
+            {risks.map((risk, index) => (
               <span
-                key={risk}
+                key={`${risk}-${index}`}
                 className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800"
               >
                 {risk}
@@ -1451,7 +1452,7 @@ function TradeProposalCard({
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-md bg-blue-100 px-2 py-1 text-xs uppercase text-blue-700">
-                      {action.action}
+                      {action.action.toUpperCase()}
                     </span>
                     <span className="font-mono text-sm">{action.symbol}</span>
                     {typeof action.target_weight === "number" && (
@@ -1525,8 +1526,8 @@ function TradeProposalCard({
                 Risk Review Required
               </p>
               <ul className="space-y-1 text-sm text-amber-700">
-                {violations.map((violation) => (
-                  <li key={violation}>- {violation}</li>
+                {violations.map((violation, index) => (
+                  <li key={`${violation}-${index}`}>- {violation}</li>
                 ))}
               </ul>
             </div>
@@ -1576,8 +1577,8 @@ function TradeProposalCard({
             Remaining Policy Gap
           </p>
           <ul className="space-y-1 text-sm text-blue-700">
-            {residualPolicyGaps.map((gap) => (
-              <li key={gap}>- {gap}</li>
+            {residualPolicyGaps.map((gap, index) => (
+              <li key={`${gap}-${index}`}>- {gap}</li>
             ))}
           </ul>
         </div>
@@ -2009,7 +2010,13 @@ async function applyTradeProposal({
         allocations,
         holdings,
       })
-      const tradeAmount = totalValue > 0 ? (tradePct / 100) * totalValue : 0
+      const explicitTradeAmount = Number(action.target_base_amount || 0)
+      const tradeAmount =
+        explicitTradeAmount > 0
+          ? explicitTradeAmount
+          : totalValue > 0
+            ? (tradePct / 100) * totalValue
+            : 0
 
       if (tradeAmount <= 0) continue
       const existingHolding = holdings.find(
@@ -2550,7 +2557,7 @@ function readActions(value: unknown) {
   return value.flatMap((item) => {
     if (!isRecord(item)) return []
     const symbol = readString(item.symbol, "")
-    const action = readString(item.action, "")
+    const action = readString(item.action, "").toLowerCase()
     if (!symbol || !action) return []
 
     return [
@@ -2564,6 +2571,7 @@ function readActions(value: unknown) {
         estimated_portfolio_pct_change: readNumber(
           item.estimated_portfolio_pct_change
         ),
+        target_base_amount: readNumber(item.target_base_amount),
       },
     ]
   })

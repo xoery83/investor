@@ -107,6 +107,7 @@ export async function validateAgentPublicationReadiness({
   const latestRun = latestRunResult.data as AgentRun | null
   const latestProposal =
     latestProposalResult.data as TradeProposalWithValidation | null
+  const isCopycatAgent = agent.agent_mode === "copycat"
 
   const checks: PublicationReadinessCheck[] = []
   const addCheck = (
@@ -179,7 +180,14 @@ export async function validateAgentPublicationReadiness({
     "Agent needs an active investment universe with investable symbols."
   )
 
-  if (universe) {
+  if (universe && isCopycatAgent) {
+    addCheck(
+      "universe_scope",
+      "Universe scope",
+      true,
+      "Copycat universe scope is driven by the linked source snapshot."
+    )
+  } else if (universe) {
     addCheck(
       "universe_scope",
       "Universe scope",
@@ -210,7 +218,7 @@ export async function validateAgentPublicationReadiness({
     concentration.message
   )
 
-  if (universe && holdings.length > 0) {
+  if (!isCopycatAgent && universe && holdings.length > 0) {
     const allowedSymbols = universeSymbols(universe)
     const outOfUniverse = holdings.filter(
       (holding) => !allowedSymbols.has(normalizeMarketSymbol(String(holding.symbol || "")))
@@ -225,13 +233,29 @@ export async function validateAgentPublicationReadiness({
     )
   }
 
+  if (isCopycatAgent && holdings.length > 0) {
+    addCheck(
+      "holdings_in_universe",
+      "Holdings in universe",
+      true,
+      "Copycat holdings are scoped by the latest active source snapshot."
+    )
+  }
+
   const successfulRebalance =
     latestRun?.status === "completed" || latestRun?.status === "success"
+  const latestProposalBody = isRecord(latestProposal?.proposal)
+    ? latestProposal.proposal
+    : {}
+  const copycatSnapshotProposal =
+    latestProposalBody.proposal_type === "copycat_snapshot"
   addCheck(
     "successful_rebalance",
     "Successful rebalance run",
-    successfulRebalance,
-    "At least one successful rebalance run is required before publication."
+    successfulRebalance || (isCopycatAgent && copycatSnapshotProposal),
+    isCopycatAgent
+      ? "At least one successful snapshot sync proposal is required before publication."
+      : "At least one successful rebalance run is required before publication."
   )
 
   const proposalApproved =
@@ -281,6 +305,10 @@ function arrayValue(value: unknown) {
 function numberValue(value: unknown) {
   const number = Number(value || 0)
   return Number.isFinite(number) ? number : 0
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
 
 function portfolioTotalValue(

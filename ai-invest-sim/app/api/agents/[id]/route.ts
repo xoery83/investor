@@ -900,12 +900,11 @@ function resolveAgentVisibility(
   role: string,
   fallback: string
 ) {
-  if (role === "admin" && value === "system") return "system"
   if ((role === "admin" || role === "pro") && value === "public") {
     return "public"
   }
   if (value === "private") return "private"
-  return fallback || "private"
+  return fallback === "system" ? "private" : fallback || "private"
 }
 
 function resolveCreatorDisplayName(

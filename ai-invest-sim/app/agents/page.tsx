@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
 import Link from "next/link"
 import type { User } from "@supabase/supabase-js"
 
@@ -17,14 +18,17 @@ type AgentListItem = Agent & {
   follower_count?: number
   is_following?: boolean
   follower_position_value?: number
+  latest_annualized_return?: number | null
+  latest_cumulative_return?: number | null
 }
 
-
-
-type SourceFilter = "all" | "system" | "user"
-type VisibilityFilter = "all" | Agent["visibility"]
+type MainTab = "public" | "mine"
+type SortKey = "inception" | "annualized" | "newest" | "followers" | "capital"
 type LifecycleFilter = "all" | Agent["lifecycle_status"]
+type RiskFilter = "all" | Agent["risk_level"]
+type ModeFilter = "all" | "copycat" | "ai_manager"
 type FollowingFilter = "all" | "following"
+
 const AGENTS_CACHE_TTL_MS = 60_000
 
 export default function AgentsPage() {
@@ -32,14 +36,16 @@ export default function AgentsPage() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all")
-  const [visibilityFilter, setVisibilityFilter] =
-    useState<VisibilityFilter>("all")
+  const [activeTab, setActiveTab] = useState<MainTab>("public")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [sortKey, setSortKey] = useState<SortKey>("inception")
   const [lifecycleFilter, setLifecycleFilter] =
     useState<LifecycleFilter>("all")
+  const [riskFilter, setRiskFilter] = useState<RiskFilter>("all")
+  const [modeFilter, setModeFilter] = useState<ModeFilter>("all")
   const [followingFilter, setFollowingFilter] =
     useState<FollowingFilter>("all")
-  const [searchQuery, setSearchQuery] = useState("")
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [creatorFilter] = useState(() => {
     if (typeof window === "undefined") return ""
     return new URLSearchParams(window.location.search).get("creator") || ""
@@ -47,9 +53,8 @@ export default function AgentsPage() {
   const inFlightRequestKey = useRef<string | null>(null)
 
   const loadAgents = useCallback(async (token: string | null, userId?: string) => {
-    const cacheKey = token && userId
-      ? `agents:list:auth:${userId}`
-      : "agents:list:anon"
+    const cacheKey =
+      token && userId ? `agents:list:auth:${userId}` : "agents:list:anon"
     const requestKey = userId || token || "anonymous"
     const cached = readAgentsCache(cacheKey)
 
@@ -115,62 +120,71 @@ export default function AgentsPage() {
     return () => subscription.unsubscribe()
   }, [loadAgents])
 
+  const visibleAgents = useMemo(
+    () => agents.filter((agent) => agent.visibility !== "system"),
+    [agents]
+  )
+
   const filteredAgents = useMemo(
     () =>
-      agents.filter((agent) => {
-        const query = searchQuery.trim().toLowerCase()
-        const systemAgent = isSystemOrAdminAgent(agent)
-        if (followingFilter === "following" && !agent.is_following) {
-          return false
-        }
-        if (sourceFilter === "system" && !systemAgent) return false
-        if (sourceFilter === "user" && systemAgent) return false
-        if (
-          visibilityFilter !== "all" &&
-          agent.visibility !== visibilityFilter
-        ) {
-          return false
-        }
-        if (
-          lifecycleFilter !== "all" &&
-          agent.lifecycle_status !== lifecycleFilter
-        ) {
-          return false
-        }
-        if (query && !agentMatchesQuery(agent, query)) return false
-        if (creatorFilter && agent.owner_user_id !== creatorFilter) return false
-        return true
+      applyAgentFilters(visibleAgents, {
+        activeTab,
+        userId: user?.id,
+        searchQuery,
+        sortKey,
+        lifecycleFilter,
+        riskFilter,
+        modeFilter,
+        followingFilter,
+        creatorFilter,
       }),
     [
-      agents,
+      activeTab,
       creatorFilter,
       followingFilter,
       lifecycleFilter,
+      modeFilter,
+      riskFilter,
       searchQuery,
-      sourceFilter,
-      visibilityFilter,
+      sortKey,
+      user?.id,
+      visibleAgents,
     ]
   )
-  const systemAgents = filteredAgents.filter(isSystemOrAdminAgent)
-  const userAgents = filteredAgents.filter(
-    (agent) => !isSystemOrAdminAgent(agent)
+
+  const publicAgents = filteredAgents.filter(
+    (agent) => agent.visibility === "public"
   )
+  const publicAdminCopycatAgents = publicAgents.filter(
+    (agent) => isAdminAgent(agent) && agent.agent_mode === "copycat"
+  )
+  const publicAdminAgents = publicAgents.filter(
+    (agent) => isAdminAgent(agent) && agent.agent_mode !== "copycat"
+  )
+  const publicUserAgents = publicAgents.filter((agent) => !isAdminAgent(agent))
+  const myAgents = filteredAgents.filter(
+    (agent) => user && agent.owner_user_id === user.id
+  )
+
+  const showingAgents =
+    activeTab === "public" ? publicAgents.length : myAgents.length
 
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-8 flex items-center justify-between gap-4">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-8 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">Investment Agents</h1>
-            <p className="mt-2 text-slate-400">
-              Browse public agents and manage the agents attached to your account.
+            <p className="mt-2 text-slate-500">
+              Browse public agents, compare performance, and manage the agents
+              attached to your account.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             {user ? (
               <>
-                <span className="hidden max-w-[220px] truncate text-sm text-slate-400 md:inline">
+                <span className="hidden max-w-[220px] truncate text-sm text-slate-500 md:inline">
                   {user.email}
                 </span>
                 <button
@@ -179,9 +193,10 @@ export default function AgentsPage() {
                     await supabase.auth.signOut()
                     clearAgentsCache()
                     setUser(null)
+                    setActiveTab("public")
                     await loadAgents(null)
                   }}
-                  className="rounded-lg border border-blue-200 bg-white/70 px-4 py-2 text-slate-700 hover:bg-blue-50"
+                  className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-slate-700 hover:bg-blue-50"
                 >
                   Sign out
                 </button>
@@ -189,7 +204,7 @@ export default function AgentsPage() {
             ) : (
               <Link
                 href="/auth/login?next=%2Fagents"
-                className="rounded-lg border border-blue-200 bg-white/70 px-4 py-2 text-slate-700 hover:bg-blue-50"
+                className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-slate-700 hover:bg-blue-50"
               >
                 Log in
               </Link>
@@ -203,18 +218,47 @@ export default function AgentsPage() {
           </div>
         </div>
 
-        <AgentFilters
-          sourceFilter={sourceFilter}
-          visibilityFilter={visibilityFilter}
-          lifecycleFilter={lifecycleFilter}
-          followingFilter={followingFilter}
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex rounded-xl border border-blue-200 bg-white p-1 shadow-sm shadow-blue-100/60">
+            <TabButton
+              active={activeTab === "public"}
+              onClick={() => setActiveTab("public")}
+            >
+              Public
+            </TabButton>
+            <TabButton
+              active={activeTab === "mine"}
+              onClick={() => {
+                setActiveTab("mine")
+                setFollowingFilter("all")
+              }}
+              disabled={!user}
+            >
+              My Agents
+            </TabButton>
+          </div>
+          <span className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-500">
+            {showingAgents} shown
+          </span>
+        </div>
+
+        <AgentToolbar
+          activeTab={activeTab}
           searchQuery={searchQuery}
+          sortKey={sortKey}
+          lifecycleFilter={lifecycleFilter}
+          riskFilter={riskFilter}
+          modeFilter={modeFilter}
+          followingFilter={followingFilter}
           userLoggedIn={Boolean(user)}
-          onSourceChange={setSourceFilter}
-          onVisibilityChange={setVisibilityFilter}
-          onLifecycleChange={setLifecycleFilter}
-          onFollowingChange={setFollowingFilter}
+          showAdvancedFilters={showAdvancedFilters}
           onSearchChange={setSearchQuery}
+          onSortChange={setSortKey}
+          onLifecycleChange={setLifecycleFilter}
+          onRiskChange={setRiskFilter}
+          onModeChange={setModeFilter}
+          onFollowingChange={setFollowingFilter}
+          onToggleAdvanced={() => setShowAdvancedFilters((value) => !value)}
         />
 
         {creatorFilter && (
@@ -237,10 +281,10 @@ export default function AgentsPage() {
         )}
 
         {loading ? (
-          <p className="text-slate-400">Loading agents...</p>
-        ) : agents.length === 0 ? (
-          <div className="rounded-xl border border-blue-200 bg-white/60 p-8 text-center">
-            <p className="text-slate-400">
+          <p className="text-slate-500">Loading agents...</p>
+        ) : visibleAgents.length === 0 ? (
+          <div className="rounded-xl border border-blue-200 bg-white/70 p-8 text-center">
+            <p className="text-slate-500">
               {user
                 ? "No visible agents yet."
                 : "No public agents yet. Log in to create your own private agent."}
@@ -252,61 +296,94 @@ export default function AgentsPage() {
               {user ? "Create your first Agent" : "Log in"}
             </Link>
           </div>
-        ) : filteredAgents.length === 0 ? (
-          <div className="rounded-xl border border-blue-200 bg-white/60 p-8 text-center">
-            <p className="text-slate-400">
-              No agents match the selected filters.
-            </p>
-          </div>
+        ) : activeTab === "public" ? (
+          <PublicAgentsView
+            adminCopycatAgents={publicAdminCopycatAgents}
+            adminAgents={publicAdminAgents}
+            userAgents={publicUserAgents}
+          />
         ) : (
-          <div className="space-y-8">
-            <AgentSection
-              title="System & Admin Agents"
-              description="Platform-managed agents and admin-created discoverable agents. Only public agents can be followed."
-              agents={systemAgents}
-              emptyMessage="No system or admin agents match the selected filters."
-            />
-            <AgentSection
-              title="User Agents"
-              description="Agents created by individual users. Creator names use display name first, then email prefix."
-              agents={userAgents}
-              emptyMessage="No user-created agents match the selected filters."
-            />
-          </div>
+          <AgentSection
+            title="My Agents"
+            description="Private, public, draft, active, and paused agents created by your account."
+            agents={myAgents}
+            emptyMessage={
+              user
+                ? "No agents match the selected filters."
+                : "Log in to view agents created by your account."
+            }
+          />
         )}
       </div>
     </main>
   )
 }
 
-function AgentFilters({
-  sourceFilter,
-  visibilityFilter,
-  lifecycleFilter,
-  followingFilter,
-  searchQuery,
-  userLoggedIn,
-  onSourceChange,
-  onVisibilityChange,
-  onLifecycleChange,
-  onFollowingChange,
-  onSearchChange,
+function TabButton({
+  active,
+  disabled,
+  onClick,
+  children,
 }: {
-  sourceFilter: SourceFilter
-  visibilityFilter: VisibilityFilter
-  lifecycleFilter: LifecycleFilter
-  followingFilter: FollowingFilter
-  searchQuery: string
-  userLoggedIn: boolean
-  onSourceChange: (value: SourceFilter) => void
-  onVisibilityChange: (value: VisibilityFilter) => void
-  onLifecycleChange: (value: LifecycleFilter) => void
-  onFollowingChange: (value: FollowingFilter) => void
-  onSearchChange: (value: string) => void
+  active: boolean
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
 }) {
   return (
-    <section className="mb-6 rounded-xl border border-blue-200 bg-white/75 p-4 shadow-sm shadow-blue-100/60">
-      <div className="mb-3 grid gap-3 md:grid-cols-[1.3fr_0.7fr]">
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg px-5 py-2 text-sm font-medium transition ${
+        active
+          ? "bg-blue-600 text-white shadow-sm"
+          : "text-slate-600 hover:bg-blue-50"
+      } disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function AgentToolbar({
+  activeTab,
+  searchQuery,
+  sortKey,
+  lifecycleFilter,
+  riskFilter,
+  modeFilter,
+  followingFilter,
+  userLoggedIn,
+  showAdvancedFilters,
+  onSearchChange,
+  onSortChange,
+  onLifecycleChange,
+  onRiskChange,
+  onModeChange,
+  onFollowingChange,
+  onToggleAdvanced,
+}: {
+  activeTab: MainTab
+  searchQuery: string
+  sortKey: SortKey
+  lifecycleFilter: LifecycleFilter
+  riskFilter: RiskFilter
+  modeFilter: ModeFilter
+  followingFilter: FollowingFilter
+  userLoggedIn: boolean
+  showAdvancedFilters: boolean
+  onSearchChange: (value: string) => void
+  onSortChange: (value: SortKey) => void
+  onLifecycleChange: (value: LifecycleFilter) => void
+  onRiskChange: (value: RiskFilter) => void
+  onModeChange: (value: ModeFilter) => void
+  onFollowingChange: (value: FollowingFilter) => void
+  onToggleAdvanced: () => void
+}) {
+  return (
+    <section className="mb-6 rounded-xl border border-blue-200 bg-white/80 p-4 shadow-sm shadow-blue-100/60">
+      <div className="grid gap-3 lg:grid-cols-[1fr_220px_160px]">
         <label className="block">
           <span className="mb-2 block text-xs uppercase tracking-widest text-slate-500">
             Search
@@ -314,57 +391,88 @@ function AgentFilters({
           <input
             value={searchQuery}
             onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Search name, description, creator, risk, frequency..."
+            placeholder={
+              activeTab === "public"
+                ? "Search public agents by name, creator, risk, theme..."
+                : "Search your agents by name, status, risk, theme..."
+            }
             className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           />
         </label>
         <FilterSelect
-          label="Following"
-          value={followingFilter}
-          onChange={(value) => onFollowingChange(value as FollowingFilter)}
-          disabled={!userLoggedIn}
+          label="Sort"
+          value={sortKey}
+          onChange={(value) => onSortChange(value as SortKey)}
           options={[
-            ["all", userLoggedIn ? "All agents" : "Log in to filter"],
-            ["following", "Following only"],
+            ["inception", "Since inception return"],
+            ["annualized", "Annualized return"],
+            ["newest", "Newest created"],
+            ["followers", "Follower count"],
+            ["capital", "Agent ETF capital"],
           ]}
         />
+        <label className="block">
+          <span className="mb-2 block text-xs uppercase tracking-widest text-slate-500">
+            Filters
+          </span>
+          <button
+            type="button"
+            onClick={onToggleAdvanced}
+            className="w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-left text-sm text-blue-700 transition hover:bg-blue-100"
+          >
+            {showAdvancedFilters ? "Hide advanced" : "Advanced filters"}
+          </button>
+        </label>
       </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        <FilterSelect
-          label="Source"
-          value={sourceFilter}
-          onChange={(value) => onSourceChange(value as SourceFilter)}
-          options={[
-            ["all", "All sources"],
-            ["system", "System/Admin"],
-            ["user", "User-created"],
-          ]}
-        />
-        <FilterSelect
-          label="Visibility"
-          value={visibilityFilter}
-          onChange={(value) => onVisibilityChange(value as VisibilityFilter)}
-          options={[
-            ["all", "All visibility"],
-            ["system", "System"],
-            ["public", "Public"],
-            ["private", "Private"],
-          ]}
-        />
-        <FilterSelect
-          label="Status"
-          value={lifecycleFilter}
-          onChange={(value) => onLifecycleChange(value as LifecycleFilter)}
-          options={[
-            ["all", "All status"],
-            ["draft", "Draft"],
-            ["active", "Active"],
-            ["paused", "Paused"],
-            ["retired", "Retired"],
-            ["archived", "Archived"],
-          ]}
-        />
-      </div>
+
+      {showAdvancedFilters && (
+        <div className="mt-4 grid gap-3 border-t border-blue-100 pt-4 md:grid-cols-2 lg:grid-cols-4">
+          <FilterSelect
+            label="Risk"
+            value={riskFilter}
+            onChange={(value) => onRiskChange(value as RiskFilter)}
+            options={[
+              ["all", "All risk levels"],
+              ["low", "Low"],
+              ["medium", "Medium"],
+              ["high", "High"],
+            ]}
+          />
+          <FilterSelect
+            label="Mode"
+            value={modeFilter}
+            onChange={(value) => onModeChange(value as ModeFilter)}
+            options={[
+              ["all", "All agent modes"],
+              ["copycat", "Copycat"],
+              ["ai_manager", "AI manager"],
+            ]}
+          />
+          <FilterSelect
+            label="Status"
+            value={lifecycleFilter}
+            onChange={(value) => onLifecycleChange(value as LifecycleFilter)}
+            options={[
+              ["all", "All lifecycle status"],
+              ["draft", "Draft"],
+              ["active", "Active"],
+              ["paused", "Paused"],
+              ["retired", "Retired"],
+              ["archived", "Archived"],
+            ]}
+          />
+          <FilterSelect
+            label="Following"
+            value={followingFilter}
+            onChange={(value) => onFollowingChange(value as FollowingFilter)}
+            disabled={!userLoggedIn || activeTab !== "public"}
+            options={[
+              ["all", userLoggedIn ? "All public agents" : "Log in to filter"],
+              ["following", "Following only"],
+            ]}
+          />
+        </div>
+      )}
     </section>
   )
 }
@@ -403,6 +511,39 @@ function FilterSelect({
   )
 }
 
+function PublicAgentsView({
+  adminCopycatAgents,
+  adminAgents,
+  userAgents,
+}: {
+  adminCopycatAgents: AgentListItem[]
+  adminAgents: AgentListItem[]
+  userAgents: AgentListItem[]
+}) {
+  return (
+    <div className="space-y-8">
+      <AgentSection
+        title="Public Admin Copycat"
+        description="Platform copycat agents that track external manager disclosures and snapshots."
+        agents={adminCopycatAgents}
+        emptyMessage="No public admin copycat agents match the selected filters."
+      />
+      <AgentSection
+        title="Public Admin AI Agents"
+        description="Platform-operated non-copycat agents managed by AI workflows."
+        agents={adminAgents}
+        emptyMessage="No public admin AI agents match the selected filters."
+      />
+      <AgentSection
+        title="Public User Agents"
+        description="Public agents created by Pro users. Use filters to compare risk, performance, followers, and capital."
+        agents={userAgents}
+        emptyMessage="No public user agents match the selected filters."
+      />
+    </div>
+  )
+}
+
 function AgentSection({
   title,
   description,
@@ -418,20 +559,20 @@ function AgentSection({
     <section>
       <div className="mb-4 flex items-end justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold">{title}</h2>
+          <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
           <p className="mt-1 text-sm text-slate-500">{description}</p>
         </div>
-        <span className="rounded-md border border-blue-200 bg-white/70 px-2 py-1 text-xs text-slate-500">
+        <span className="rounded-md border border-blue-200 bg-white px-2 py-1 text-xs text-slate-500">
           {agents.length} agent{agents.length === 1 ? "" : "s"}
         </span>
       </div>
 
       {agents.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-blue-200 bg-white/40 p-6 text-sm text-slate-500">
+        <div className="rounded-xl border border-dashed border-blue-200 bg-white/50 p-6 text-sm text-slate-500">
           {emptyMessage}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           {agents.map((agent) => (
             <AgentCard key={agent.id} agent={agent} />
           ))}
@@ -442,15 +583,36 @@ function AgentSection({
 }
 
 function AgentCard({ agent }: { agent: AgentListItem }) {
+  const tone = getAgentTone(agent)
+  const inceptionReturn = calculateInceptionReturn(agent)
+  const annualizedReturn = getAnnualizedDisplay(agent)
+
   return (
-    <article className="rounded-xl border border-blue-200 bg-white/70 p-6 shadow-sm shadow-blue-100/50 transition hover:border-blue-400 hover:bg-white">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <Link
-          href={`/agents/${agent.id}`}
-          className="text-xl font-semibold text-slate-900 hover:text-blue-600"
-        >
-          {agent.name}
-        </Link>
+    <article
+      className={`rounded-xl border bg-white/80 p-6 shadow-sm transition hover:bg-white ${tone.border} ${tone.shadow}`}
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <Link
+            href={`/agents/${agent.id}`}
+            className="text-xl font-semibold text-slate-900 hover:text-blue-600"
+          >
+            {agent.name}
+          </Link>
+          <div className="mt-1 text-sm text-slate-500">
+            by{" "}
+            {agent.owner_user_id ? (
+              <Link
+                href={`/agents?creator=${agent.owner_user_id}`}
+                className="text-blue-600 hover:text-blue-700"
+              >
+                {agent.creator_display_name || "Unknown user"}
+              </Link>
+            ) : (
+              agent.creator_display_name || "Platform"
+            )}
+          </div>
+        </div>
         <span
           className={`rounded px-2 py-1 text-xs ${
             agent.lifecycle_status === "active"
@@ -463,32 +625,27 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
+        <AgentPill value={tone.label} className={tone.pill} />
         <AgentPill value={agent.visibility || "private"} />
-        {agent.creator_role && <AgentPill value={agent.creator_role} />}
         {agent.is_following && <AgentPill value="following" />}
       </div>
 
-      <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 text-sm">
-        <p className="text-xs uppercase tracking-widest text-slate-500">
-          Creator
-        </p>
-        {agent.owner_user_id ? (
-          <Link
-            href={`/agents?creator=${agent.owner_user_id}`}
-            className="mt-1 inline-block text-blue-600 hover:text-blue-700"
-          >
-            {agent.creator_display_name || "Unknown user"}
-          </Link>
-        ) : (
-          <p className="mt-1 text-slate-700">
-            {agent.creator_display_name || "System"}
-          </p>
-        )}
-      </div>
-
-      <p className="mb-4 min-h-10 text-sm text-slate-600">
+      <p className="mb-5 min-h-12 text-sm leading-6 text-slate-600">
         {agent.description || "No description"}
       </p>
+
+      <div className="mb-5 grid grid-cols-2 gap-3">
+        <PerformanceTile
+          label="Since inception"
+          value={formatMaybePercent(inceptionReturn)}
+          tone={percentTone(inceptionReturn)}
+        />
+        <PerformanceTile
+          label={annualizedReturn.label}
+          value={annualizedReturn.value}
+          tone={annualizedReturn.tone}
+        />
+      </div>
 
       <div className="space-y-2 text-sm">
         <AgentMetric
@@ -499,10 +656,6 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
           )}
         />
         <AgentMetric
-          label="Followers"
-          value={String(agent.follower_count || 0)}
-        />
-        <AgentMetric
           label="Agent ETF Capital"
           value={formatCurrencyAmount(
             Number(agent.follower_position_value || 0),
@@ -510,38 +663,273 @@ function AgentCard({ agent }: { agent: AgentListItem }) {
             { maximumFractionDigits: 0 }
           )}
         />
-        <AgentMetric label="Risk" value={agent.risk_level} />
-        <AgentMetric label="Frequency" value={agent.rebalance_frequency} />
+        <AgentMetric
+          label="Followers"
+          value={String(agent.follower_count || 0)}
+        />
+        <AgentMetric label="Risk" value={formatToken(agent.risk_level)} />
+        <AgentMetric
+          label="Frequency"
+          value={formatToken(agent.rebalance_frequency)}
+        />
       </div>
     </article>
   )
 }
 
-function AgentPill({ value }: { value: string }) {
+function AgentPill({
+  value,
+  className = "border-blue-200 bg-blue-50 text-slate-700",
+}: {
+  value: string
+  className?: string
+}) {
   return (
-    <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs capitalize text-slate-700">
+    <span className={`rounded-md border px-2 py-1 text-xs capitalize ${className}`}>
       {formatToken(value)}
     </span>
   )
 }
 
-function AgentMetric({ label, value }: { label: string; value: string }) {
+function PerformanceTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone: "positive" | "negative" | "neutral"
+}) {
+  const toneClass =
+    tone === "positive"
+      ? "text-emerald-700"
+      : tone === "negative"
+        ? "text-red-600"
+        : "text-slate-700"
+
   return (
-    <div className="flex justify-between">
-      <span className="text-slate-500">{label}</span>
-      <span>{value}</span>
+    <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+      <p className="text-xs uppercase tracking-widest text-slate-500">{label}</p>
+      <p className={`mt-1 text-lg font-semibold ${toneClass}`}>{value}</p>
     </div>
   )
 }
 
-function isSystemOrAdminAgent(agent: AgentListItem) {
-  return agent.visibility === "system" || agent.creator_type === "admin"
+function AgentMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-right text-slate-900">{value}</span>
+    </div>
+  )
+}
+
+function applyAgentFilters(
+  agents: AgentListItem[],
+  filters: {
+    activeTab: MainTab
+    userId?: string
+    searchQuery: string
+    sortKey: SortKey
+    lifecycleFilter: LifecycleFilter
+    riskFilter: RiskFilter
+    modeFilter: ModeFilter
+    followingFilter: FollowingFilter
+    creatorFilter: string
+  }
+) {
+  const query = filters.searchQuery.trim().toLowerCase()
+
+  return [...agents]
+    .filter((agent) => {
+      if (filters.activeTab === "public" && agent.visibility !== "public") {
+        return false
+      }
+      if (
+        filters.activeTab === "mine" &&
+        (!filters.userId || agent.owner_user_id !== filters.userId)
+      ) {
+        return false
+      }
+      if (
+        filters.activeTab === "public" &&
+        filters.followingFilter === "following" &&
+        !agent.is_following
+      ) {
+        return false
+      }
+      if (
+        filters.lifecycleFilter !== "all" &&
+        agent.lifecycle_status !== filters.lifecycleFilter
+      ) {
+        return false
+      }
+      if (filters.riskFilter !== "all" && agent.risk_level !== filters.riskFilter) {
+        return false
+      }
+      if (filters.modeFilter !== "all" && agent.agent_mode !== filters.modeFilter) {
+        return false
+      }
+      if (query && !agentMatchesQuery(agent, query)) return false
+      if (filters.creatorFilter && agent.owner_user_id !== filters.creatorFilter) {
+        return false
+      }
+      return true
+    })
+    .sort((left, right) => compareAgents(left, right, filters.sortKey))
+}
+
+function compareAgents(left: AgentListItem, right: AgentListItem, sortKey: SortKey) {
+  if (sortKey === "inception") {
+    return (
+      sortablePercent(calculateInceptionReturn(right)) -
+      sortablePercent(calculateInceptionReturn(left))
+    )
+  }
+
+  if (sortKey === "newest") {
+    return (
+      new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+    )
+  }
+
+  if (sortKey === "followers") {
+    return (right.follower_count || 0) - (left.follower_count || 0)
+  }
+
+  if (sortKey === "capital") {
+    return (
+      Number(right.follower_position_value || 0) -
+      Number(left.follower_position_value || 0)
+    )
+  }
+
+  return (
+    sortableAnnualizedPercent(right) - sortableAnnualizedPercent(left)
+  )
+}
+
+function isAdminAgent(agent: AgentListItem) {
+  return agent.creator_type === "admin" || agent.creator_role === "admin"
+}
+
+function getAgentTone(agent: AgentListItem) {
+  if (agent.agent_mode === "copycat") {
+    return {
+      label: "copycat",
+      border: "border-violet-200 hover:border-violet-400",
+      shadow: "shadow-violet-100/60",
+      pill: "border-violet-200 bg-violet-50 text-violet-700",
+    }
+  }
+
+  if (isAdminAgent(agent)) {
+    return {
+      label: "admin ai",
+      border: "border-blue-200 hover:border-blue-400",
+      shadow: "shadow-blue-100/60",
+      pill: "border-blue-200 bg-blue-50 text-blue-700",
+    }
+  }
+
+  return {
+    label: "user agent",
+    border: "border-emerald-200 hover:border-emerald-400",
+    shadow: "shadow-emerald-100/60",
+    pill: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  }
+}
+
+function calculateInceptionReturn(agent: AgentListItem) {
+  const initial = Number(agent.initial_capital || 0)
+  const current = Number(agent.current_value || 0)
+  if (!Number.isFinite(initial) || initial <= 0) return null
+  if (!Number.isFinite(current)) return null
+  return ((current - initial) / initial) * 100
+}
+
+function normalizePercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return null
+  }
+  return Number(value)
+}
+
+function sortablePercent(value: number | null | undefined) {
+  return normalizePercent(value) ?? -1_000_000
+}
+
+function sortableAnnualizedPercent(agent: AgentListItem) {
+  const ageDays = getAgentAgeDays(agent)
+  if (ageDays < 30) return -1_000_000
+  return sortablePercent(agent.latest_annualized_return)
+}
+
+function getAnnualizedDisplay(agent: AgentListItem): {
+  label: string
+  value: string
+  tone: "positive" | "negative" | "neutral"
+} {
+  const ageDays = getAgentAgeDays(agent)
+  const annualized = normalizePercent(agent.latest_annualized_return)
+
+  if (ageDays < 30) {
+    return {
+      label: "Annualized",
+      value: "Too early",
+      tone: "neutral",
+    }
+  }
+
+  if (annualized === null) {
+    return {
+      label: ageDays < 90 ? "Annualized (prov.)" : "Annualized",
+      value: "--",
+      tone: "neutral",
+    }
+  }
+
+  return {
+    label: ageDays < 90 ? "Annualized (prov.)" : "Annualized",
+    value: formatMaybePercent(annualized),
+    tone: percentTone(annualized),
+  }
+}
+
+function getAgentAgeDays(agent: AgentListItem) {
+  const createdAt = new Date(agent.created_at).getTime()
+  if (!Number.isFinite(createdAt)) return 0
+  return Math.max(0, (Date.now() - createdAt) / 86_400_000)
+}
+
+function formatMaybePercent(value: number | null | undefined) {
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(Number(value))
+  ) {
+    return "--"
+  }
+  const numeric = Number(value)
+  const sign = numeric > 0 ? "+" : ""
+  return `${sign}${numeric.toFixed(2)}%`
+}
+
+function percentTone(value: number | null | undefined) {
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(Number(value)) ||
+    Number(value) === 0
+  ) {
+    return "neutral"
+  }
+  return Number(value) > 0 ? "positive" : "negative"
 }
 
 function formatToken(value: string) {
   return value.replaceAll("_", " ")
 }
-
 
 function agentMatchesQuery(agent: AgentListItem, query: string) {
   const haystack = [
@@ -554,6 +942,7 @@ function agentMatchesQuery(agent: AgentListItem, query: string) {
     agent.rebalance_frequency,
     agent.visibility,
     agent.lifecycle_status,
+    agent.agent_mode,
   ]
     .filter(Boolean)
     .join(" ")

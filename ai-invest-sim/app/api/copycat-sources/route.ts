@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("copycat_sources")
     .select(
-      "id,name,manager_name,description,source_type,benchmark_symbol,rebalance_frequency,default_base_currency,status"
+      "id,name,manager_name,description,source_type,source_url,benchmark_symbol,rebalance_frequency,default_base_currency,status,metadata"
     )
     .order("name", { ascending: true })
 

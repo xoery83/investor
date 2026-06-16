@@ -68,7 +68,7 @@ export default function ValuationPanel({
   const [lastUpdated, setLastUpdated] = React.useState<number | null>(null)
   const [error, setError] = React.useState("")
 
-  const refreshValuation = React.useCallback(async () => {
+  const refreshValuation = React.useCallback(async (force = false) => {
     if (!canRefresh) return
 
     setIsRefreshing(true)
@@ -82,10 +82,13 @@ export default function ValuationPanel({
         throw new Error("Please log in before refreshing valuation.")
       }
 
-      const response = await fetch(`/api/agents/${agentId}/valuation`, {
+      const response = await fetch(
+        `/api/agents/${agentId}/valuation${force ? "?force=1" : ""}`,
+        {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
-      })
+        }
+      )
       const payload = (await response.json()) as ValuationResponse
 
       if (!response.ok || !payload.success) {
@@ -118,8 +121,11 @@ export default function ValuationPanel({
   React.useEffect(() => {
     if (!canRefresh) return
 
-    const initialRefresh = window.setTimeout(refreshValuation, 0)
-    const interval = window.setInterval(refreshValuation, REFRESH_INTERVAL_MS)
+    const initialRefresh = window.setTimeout(() => refreshValuation(false), 0)
+    const interval = window.setInterval(
+      () => refreshValuation(false),
+      REFRESH_INTERVAL_MS
+    )
 
     return () => {
       window.clearTimeout(initialRefresh)
@@ -172,7 +178,7 @@ export default function ValuationPanel({
           <Button
             type="button"
             variant="outline"
-            onClick={refreshValuation}
+            onClick={() => refreshValuation(true)}
             disabled={isRefreshing || !canRefresh}
             className="gap-2 border-blue-200 bg-blue-50 text-white hover:bg-blue-100"
           >

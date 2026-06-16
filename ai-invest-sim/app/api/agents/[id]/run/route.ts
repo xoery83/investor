@@ -265,6 +265,7 @@ export async function POST(
       : 0
 
     while (
+      agent.agent_mode !== "copycat" &&
       validation.violations.length > 0 &&
       revisionAttempt < maxRevisionAttempts
     ) {
@@ -528,6 +529,13 @@ async function buildCopycatSnapshotProposal({
         asset_type: target.asset_type,
         current_weight: currentWeight,
         target_weight: target.target_weight,
+        target_base_amount:
+          Math.abs(delta) > 0
+            ? roundCurrency(
+                (Math.abs(delta) / 100) *
+                  resolveCopycatPortfolioBaseValue(agent, holdings)
+              )
+            : 0,
         estimated_portfolio_pct_change: Math.abs(delta),
         rationale:
           "Align simulated portfolio with the latest active copycat source snapshot.",
@@ -569,6 +577,32 @@ async function buildCopycatSnapshotProposal({
     allocation_comment:
       "The target allocation mirrors the latest active copycat snapshot and reserves residual weight as cash when holdings do not sum to 100%.",
   }
+}
+
+function resolveCopycatPortfolioBaseValue(
+  agent: Record<string, unknown>,
+  holdings: Array<Record<string, unknown>>
+) {
+  const currentValue = Number(agent.current_value || 0)
+  if (Number.isFinite(currentValue) && currentValue > 0) return currentValue
+
+  const holdingsValue = holdings.reduce(
+    (sum, holding) =>
+      sum + Number(holding.market_value_base || holding.market_value || 0),
+    0
+  )
+  const cashBalance = Number(agent.cash_balance || 0)
+  const totalValue = holdingsValue + cashBalance
+  if (Number.isFinite(totalValue) && totalValue > 0) return totalValue
+
+  const initialCapital = Number(agent.initial_capital || 0)
+  return Number.isFinite(initialCapital) && initialCapital > 0
+    ? initialCapital
+    : 0
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100
 }
 
 async function countManualRunsToday(userId: string) {

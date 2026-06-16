@@ -81,6 +81,22 @@ export default function AgentPortfolioPanel({
   const activeDraftKey = tradeDraft?.key || null
   const drawerOpen =
     tradeDrawerOpen || Boolean(activeDraftKey && dismissedDraftKey !== activeDraftKey)
+  const performanceRefreshKey = React.useMemo(
+    () =>
+      holdings
+        .map((holding) =>
+          [
+            holding.id,
+            holding.symbol,
+            holding.current_price,
+            holding.market_value_base,
+            holding.weight,
+            holding.updated_at,
+          ].join(":")
+        )
+        .join("|"),
+    [holdings]
+  )
 
   React.useEffect(() => {
     let cancelled = false
@@ -129,7 +145,7 @@ export default function AgentPortfolioPanel({
     return () => {
       cancelled = true
     }
-  }, [activeTab, agentId, holdings.length, performanceRange])
+  }, [activeTab, agentId, holdings.length, performanceRange, performanceRefreshKey])
 
   return (
     <section className="grid grid-cols-1 gap-6">

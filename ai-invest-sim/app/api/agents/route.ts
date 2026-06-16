@@ -52,9 +52,10 @@ export async function GET(request: Request) {
     )
   )
   const visibleAgentIds = visibleAgents.map((agent) => agent.id)
-  const [profileMap, publicStats, followingSet] = await Promise.all([
+  const [profileMap, publicStats, latestValuations, followingSet] = await Promise.all([
     loadCreatorProfiles(ownerIds),
     loadAgentPublicStats(visibleAgentIds, authedSupabase),
+    loadLatestValuationStats(visibleAgentIds),
     requestUser
       ? loadUserFollowingSet(authedSupabase, requestUser.id)
       : Promise.resolve(new Set<string>()),
@@ -76,6 +77,10 @@ export async function GET(request: Request) {
       is_following: followingSet.has(agent.id),
       follower_position_value:
         publicStats.get(agent.id)?.follower_position_value || 0,
+      latest_annualized_return:
+        latestValuations.get(agent.id)?.annualized_return ?? null,
+      latest_cumulative_return:
+        latestValuations.get(agent.id)?.cumulative_return ?? null,
     }
   })
 
@@ -284,7 +289,6 @@ export async function POST(request: Request) {
 }
 
 function resolveAgentVisibility(value: unknown, role: string) {
-  if (role === "admin" && value === "system") return "system"
   if ((role === "admin" || role === "pro") && value === "public") {
     return "public"
   }
@@ -337,6 +341,40 @@ async function loadFollowCounts(
 type AgentPublicStats = {
   follower_count: number
   follower_position_value: number
+}
+
+type LatestValuationStats = {
+  annualized_return: number | null
+  cumulative_return: number | null
+}
+
+async function loadLatestValuationStats(agentIds: string[]) {
+  if (agentIds.length === 0) return new Map<string, LatestValuationStats>()
+
+  const { data, error } = await supabase
+    .from("agent_valuations")
+    .select("agent_id,annualized_return,cumulative_return,recorded_at")
+    .in("agent_id", agentIds)
+    .order("recorded_at", { ascending: false })
+
+  if (error) return new Map<string, LatestValuationStats>()
+
+  return (data || []).reduce((stats, row) => {
+    const agentId = String(row.agent_id)
+    if (!stats.has(agentId)) {
+      stats.set(agentId, {
+        annualized_return:
+          row.annualized_return === null
+            ? null
+            : Number(row.annualized_return),
+        cumulative_return:
+          row.cumulative_return === null
+            ? null
+            : Number(row.cumulative_return),
+      })
+    }
+    return stats
+  }, new Map<string, LatestValuationStats>())
 }
 
 async function loadAgentPublicStats(

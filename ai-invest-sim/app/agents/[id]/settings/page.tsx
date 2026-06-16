@@ -481,12 +481,10 @@ export default function AgentSettingsPage() {
   const isAdmin = userRole === "admin"
   const isOwner = Boolean(currentUser && agentOwnerId === currentUser.id)
   const canPublish = isAdmin || userRole === "pro"
-  const canUseSystemVisibility = isAdmin
   const canEditSettings = isAdmin || isOwner
   const visibilityOptions: [string, string][] = [
     ["private", "Private"],
     ...(canPublish ? [["public", "Public"] as [string, string]] : []),
-    ...(canUseSystemVisibility ? [["system", "System"] as [string, string]] : []),
   ]
   const canEditLifecycle = isAdmin || isOwner
   const canResetAgent = canEditSettings && agentForm.visibility === "private"
@@ -840,7 +838,7 @@ export default function AgentSettingsPage() {
                 options={visibilityOptions}
                 hint={
                   canPublish
-                    ? "Public agents can be discovered by other users. System agents are admin-only."
+                    ? "Public agents can be discovered by other users after readiness checks pass."
                     : "Free and Plus users can create private agents only. Pro users can publish agents."
                 }
               />

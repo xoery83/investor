@@ -23,6 +23,8 @@ export async function POST(
 ) {
   const { id } = await context.params
   const requestUser = await getRequestUser(request)
+  const url = new URL(request.url)
+  const forceRefresh = url.searchParams.get("force") === "1"
 
   if (!requestUser) {
     return NextResponse.json(
@@ -82,7 +84,7 @@ export async function POST(
   const previousValuation =
     ((previousValuations || [])[0] as AgentValuation | undefined) || null
 
-  if (previousValuation && isFreshSnapshot(previousValuation)) {
+  if (!forceRefresh && previousValuation && isFreshSnapshot(previousValuation)) {
     await hydrateQuoteCache((holdings || []) as AgentHolding[])
 
     const holdingsValue = (holdings || []).reduce((sum, holding) => {

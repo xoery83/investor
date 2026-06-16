@@ -96,6 +96,8 @@ export function validateTradeProposal({
 }): LocalValidationResult {
   const record = isRecord(proposal) ? proposal : {}
   const manualRequired = record.manual_required === true
+  const skipUniverseScopeCheck =
+    record.proposal_type === "copycat_snapshot" || agent.agent_mode === "copycat"
   const targetAllocation = readAllocation(record.target_allocation)
   const suggestedActions = readActions(record.suggested_actions)
   const violations: string[] = []
@@ -135,13 +137,15 @@ export function validateTradeProposal({
     violations.push("No target allocation or suggested actions were provided.")
   }
 
-  const outOfMarketSymbols = getOutOfMarketSymbols({
-    targetAllocation,
-    suggestedActions,
-    currentWeights,
-    profile,
-    universe,
-  })
+  const outOfMarketSymbols = skipUniverseScopeCheck
+    ? []
+    : getOutOfMarketSymbols({
+        targetAllocation,
+        suggestedActions,
+        currentWeights,
+        profile,
+        universe,
+      })
 
   if (outOfMarketSymbols.length > 0) {
     violations.push(
