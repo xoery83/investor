@@ -217,8 +217,12 @@ export default function DataSettingsPage() {
       })
       if (!extraction.success) {
         setError(extraction.error || "Latest snapshot extraction failed.")
-      } else {
+      } else if (extraction.snapshot && (extraction.holdings || []).length > 0) {
         setDiscoveryStatus("Latest SEC 13F snapshot extracted and saved.")
+      } else {
+        setDiscoveryStatus(
+          "Latest SEC 13F filing was found, but holdings extraction needs review."
+        )
       }
       await refreshJobs()
     } catch (err) {

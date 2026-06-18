@@ -22,7 +22,8 @@ export type FxRate = {
 export async function getCachedFxRate(
   supabase: SupabaseClient,
   fromCurrency: string,
-  toCurrency: string
+  toCurrency: string,
+  options: { force?: boolean } = {}
 ): Promise<FxRate> {
   const from = normalizeCurrency(fromCurrency)
   const to = normalizeCurrency(toCurrency)
@@ -37,7 +38,7 @@ export async function getCachedFxRate(
     }
   }
 
-  const cached = await readCachedFxRate(supabase, from, to)
+  const cached = options.force ? null : await readCachedFxRate(supabase, from, to)
   if (cached) return cached
 
   const fresh = await fetchFxRate(from, to)

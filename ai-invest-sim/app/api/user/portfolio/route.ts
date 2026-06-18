@@ -84,6 +84,24 @@ export async function GET(request: Request) {
     0
   )
   const cashBalance = Number(portfolio.portfolio.cash_balance || 0)
+  const totalValue = cashBalance + positionsValue
+  const positionsWithMetrics = normalizedPositions.map((position) => {
+    const shares = Number(position.shares || 0)
+    const averageNav = Number(position.average_nav || 0)
+    const marketValue = Number(position.market_value || 0)
+    const costBasis = shares * averageNav
+    const unrealizedPnl = marketValue - costBasis
+
+    return {
+      ...position,
+      cost_basis: costBasis,
+      unrealized_pnl: unrealizedPnl,
+      unrealized_return_pct:
+        costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : 0,
+      portfolio_weight_pct:
+        totalValue > 0 ? (marketValue / totalValue) * 100 : 0,
+    }
+  })
   const { data: follows, error: followsError } = await supabase
     .from("agent_follows")
     .select(
@@ -101,25 +119,68 @@ export async function GET(request: Request) {
   }
 
   const positionAgentIds = new Set(
-    normalizedPositions.map((position) => String(position.agent_id))
+    positionsWithMetrics.map((position) => String(position.agent_id))
   )
-  const normalizedFollows = (follows || []).map((follow) => ({
-    ...follow,
-    has_position: positionAgentIds.has(String(follow.agent_id)),
-  }))
+  const normalizedFollows = (follows || [])
+    .map((follow) => ({
+      ...follow,
+      has_position: positionAgentIds.has(String(follow.agent_id)),
+    }))
+    .filter((follow) => {
+      const lifecycle = String(
+        (follow.agents as { lifecycle_status?: string } | null)?.lifecycle_status ||
+          ""
+      ).toLowerCase()
+
+      return !["archived", "retired"].includes(lifecycle)
+    })
+
+  const agentIds = Array.from(positionAgentIds)
+  const oneYearAgo = new Date()
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+
+  const { data: valuationHistory } =
+    agentIds.length > 0
+      ? await supabase
+          .from("agent_valuations")
+          .select("id,agent_id,total_value,base_currency,recorded_at")
+          .in("agent_id", agentIds)
+          .gte("recorded_at", oneYearAgo.toISOString())
+          .order("recorded_at", { ascending: true })
+      : { data: [] }
+
+  const { data: transactions } =
+    agentIds.length > 0
+      ? await supabase
+          .from("user_agent_transactions")
+          .select("id,agent_id,action,shares,nav,amount,created_at")
+          .eq("user_id", requestUser.id)
+          .in("agent_id", agentIds)
+          .order("created_at", { ascending: true })
+      : { data: [] }
+
+  const initialValue = Number(portfolio.portfolio.initial_value || 100000)
+  const navChangeAmount = totalValue - initialValue
 
   return NextResponse.json({
     success: true,
     portfolio: {
       ...portfolio.portfolio,
-      total_value: cashBalance + positionsValue,
+      total_value: totalValue,
     },
-    positions: normalizedPositions,
+    positions: positionsWithMetrics,
     follows: normalizedFollows,
+    history: {
+      agent_valuations: valuationHistory || [],
+      transactions: transactions || [],
+    },
     summary: {
       cash_balance: cashBalance,
       positions_value: positionsValue,
-      total_value: cashBalance + positionsValue,
+      total_value: totalValue,
+      initial_value: initialValue,
+      nav_change_amount: navChangeAmount,
+      nav_change_pct: initialValue > 0 ? (navChangeAmount / initialValue) * 100 : 0,
     },
   })
 }

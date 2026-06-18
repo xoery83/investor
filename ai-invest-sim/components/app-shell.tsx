@@ -13,7 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
-  Sparkles,
+  Trophy,
   UserCircle,
 } from "lucide-react"
 
@@ -55,7 +55,7 @@ const navSections: NavSection[] = [
   },
   {
     titleKey: "nav.intelligence",
-    items: [{ labelKey: "nav.research", href: "/research", icon: Sparkles }],
+    items: [{ labelKey: "nav.leaderboard", href: "/research", icon: Trophy }],
   },
   {
     titleKey: "nav.system",

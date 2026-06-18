@@ -20,10 +20,13 @@ type CachedQuoteRow = {
 
 export async function getCachedPrice(
   supabase: SupabaseClient,
-  symbol: string
+  symbol: string,
+  options: { force?: boolean } = {}
 ): Promise<MarketQuote> {
   const normalizedSymbol = normalizeMarketSymbol(symbol)
-  const cached = await readCachedQuote(supabase, normalizedSymbol)
+  const cached = options.force
+    ? null
+    : await readCachedQuote(supabase, normalizedSymbol)
 
   if (cached) {
     return cached

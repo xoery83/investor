@@ -56,22 +56,32 @@ export async function POST(request: Request) {
     sourceUrl: sourceUrl || copycatSource.source_url,
     rawText,
   })
-  const extraction = await extractIngestionJson({
-    kind: "copycat_snapshot",
-    sourceText: source.raw_text,
-    context: {
-      copycat_source: copycatSource,
-      source_url: source.source_url,
-      report_date: reportDateOverride,
-      allow_ticker_matching: allowTickerMatching,
-    },
-  })
   const parsed13f = parse13fXmlExtraction({
     rawText: source.raw_text,
     reportDate: reportDateOverride,
     sourceUrl: source.source_url,
     allowTickerMatching,
   })
+
+  const extraction =
+    parsed13f && getHoldingCount(parsed13f) > 0
+      ? {
+          extracted_json: parsed13f,
+          confidence: readOptionalNumber(parsed13f.confidence),
+          warnings: [
+            "OpenAI extraction was skipped because the SEC 13F XML was parsed deterministically.",
+          ],
+        }
+      : await extractIngestionJson({
+          kind: "copycat_snapshot",
+          sourceText: source.raw_text.slice(0, 120_000),
+          context: {
+            copycat_source: copycatSource,
+            source_url: source.source_url,
+            report_date: reportDateOverride,
+            allow_ticker_matching: allowTickerMatching,
+          },
+        })
   const extractionChoice = chooseSnapshotExtraction({
     parsed13f,
     modelExtraction: extraction.extracted_json,
@@ -183,7 +193,7 @@ function parse13fXmlExtraction({
   const blocks =
     rawText.match(/<(?:\w+:)?infoTable\b[\s\S]*?<\/(?:\w+:)?infoTable>/gi) ||
     []
-  const rawHoldings = blocks.flatMap((block) => {
+  const rawHoldings = blocks.flatMap((block, index) => {
     const issuer = readXmlTag(block, "nameOfIssuer")
     const title = readXmlTag(block, "titleOfClass")
     const cusip = readXmlTag(block, "cusip")
@@ -191,19 +201,22 @@ function parse13fXmlExtraction({
     const shares = readXmlNumber(block, "sshPrnamt")
     if (!issuer || value === null) return []
     const matched = allowTickerMatching ? match13fTicker({ cusip, issuer }) : null
+    const unresolvedSymbol = buildUnresolved13fSymbol(cusip, index)
     return [
       {
-        symbol: matched?.symbol || null,
+        symbol: matched?.symbol || unresolvedSymbol,
         cusip,
         asset_name: issuer,
-        asset_type: "stock",
+        asset_type: matched?.symbol ? "stock" : "unresolved_13f",
         title_of_class: title,
         raw_reported_value_thousands: value,
         reported_value: value * 1000,
         quantity: shares,
         currency: "USD",
         ticker_match_confidence: matched?.confidence ?? null,
-        ticker_match_reason: matched?.reason ?? null,
+        ticker_match_reason:
+          matched?.reason ||
+          "No ticker match was found from CUSIP/issuer; retained as an unresolved 13F row for admin review.",
       },
     ]
   })
@@ -213,7 +226,7 @@ function parse13fXmlExtraction({
     0
   )
   const matchedValue = rawHoldings
-    .filter((holding) => holding.symbol)
+    .filter((holding) => holding.asset_type !== "unresolved_13f")
     .reduce((sum, holding) => sum + (holding.reported_value || 0), 0)
   const holdings = aggregate13fHoldings(rawHoldings)
     .map((holding) => ({
@@ -225,7 +238,9 @@ function parse13fXmlExtraction({
     }))
     .filter((holding) => holding.symbol && holding.weight)
 
-  const unmatched = rawHoldings.filter((holding) => !holding.symbol)
+  const unmatched = rawHoldings.filter(
+    (holding) => holding.asset_type === "unresolved_13f"
+  )
   const warnings = [
     "SEC 13F XML was parsed deterministically from infoTable rows.",
     "13F reported value is provided in thousands of USD and was converted to USD.",
@@ -233,7 +248,7 @@ function parse13fXmlExtraction({
 
   if (unmatched.length > 0) {
     warnings.push(
-      `${unmatched.length} 13F rows were skipped because no ticker could be matched from CUSIP/issuer.`
+      `${unmatched.length} 13F rows were retained as unresolved CUSIP placeholders because no ticker could be matched from CUSIP/issuer.`
     )
   }
 
@@ -262,6 +277,13 @@ function parse13fXmlExtraction({
     confidence: holdings.length > 0 ? 0.85 : 0.45,
     warnings,
   }
+}
+
+function buildUnresolved13fSymbol(cusip: string | null, index: number) {
+  const normalizedCusip = typeof cusip === "string" ? cusip.trim().toUpperCase() : ""
+  return normalizedCusip
+    ? `CUSIP.${normalizedCusip}`
+    : `UNRESOLVED13F.${index + 1}`
 }
 
 function chooseSnapshotExtraction({
@@ -541,9 +563,9 @@ function match13fTicker({
     }
   }
 
-  const normalizedIssuer = issuer.toUpperCase()
+  const normalizedIssuer = normalizeIssuerForMatching(issuer)
   const byIssuer = COMMON_13F_ISSUER_SYMBOLS.find(([needle]) =>
-    normalizedIssuer.includes(needle)
+    normalizedIssuer.includes(normalizeIssuerForMatching(needle))
   )
   if (byIssuer) {
     return {
@@ -554,6 +576,19 @@ function match13fTicker({
   }
 
   return null
+}
+
+function normalizeIssuerForMatching(value: string) {
+  return value
+    .toUpperCase()
+    .replace(/&/g, " AND ")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(
+      /\b(COM|COMMON|STK|STOCK|SHS|SHARES|CL|CLASS|ORD|INC|CORP|CORPORATION|CO|COMPANY|LTD|PLC|HOLDINGS|HLDGS|GROUP)\b/g,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
 const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
@@ -586,10 +621,14 @@ const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
   "191216100": "KO",
   "19247G107": "COHR",
   "20030N101": "CMCSA",
+  "21037T109": "CEG",
   "22266T109": "CPNG",
+  "22788C105": "CRWD",
   "23306J309": "DBVT",
+  "23804L103": "DDOG",
   "234264109": "DAKT",
   "254687106": "DIS",
+  "25809K105": "DASH",
   "256746108": "DLR",
   "260003108": "DOV",
   "263534109": "DD",
@@ -617,6 +656,7 @@ const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
   "594918104": "MSFT",
   "595112103": "MU",
   "615369105": "MCO",
+  "64110L106": "NFLX",
   "632307104": "NTRA",
   "46428R107": "GSG",
   "464287655": "IWM",
@@ -629,9 +669,11 @@ const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
   "713448108": "PEP",
   "717081103": "PFE",
   "742718109": "PG",
+  "722304102": "PLTR",
   "74366E102": "PTGX",
   "74623V103": "PCT",
   "74743L100": "Q",
+  "771049103": "RBLX",
   "76131D103": "QSR",
   "76155X100": "RVMD",
   "75886F107": "REGN",
@@ -640,6 +682,8 @@ const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
   "80004C200": "SNDK",
   "81141R100": "SE",
   "812215200": "SEG",
+  "81762P102": "NOW",
+  "833445109": "SNOW",
   "83443Q103": "SOLS",
   "84265V105": "SCCO",
   "861012102": "STM",
@@ -649,6 +693,7 @@ const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
   "881624209": "TEVA",
   "88160R101": "TSLA",
   "90353T100": "UBER",
+  "896945201": "TRIP",
   "90138F102": "TWLO",
   "90184D100": "TWST",
   "910047109": "UAL",
@@ -670,6 +715,8 @@ const COMMON_13F_CUSIP_SYMBOLS: Record<string, string> = {
   G0896C103: "TBBB",
   G25508105: "CRH",
   G54950103: "LIN",
+  G5960L103: "MNDY",
+  G6683N103: "NU",
   G7997R103: "STX",
   N4732M103: "JBS",
   N53745100: "LYB",
@@ -698,11 +745,15 @@ const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
   ["CLEVELAND-CLIFFS", "CLF"],
   ["CLOUDFLARE", "NET"],
   ["COHERENT", "COHR"],
+  ["CONSTELLATION ENERGY", "CEG"],
   ["COCA COLA", "KO"],
   ["COCA-COLA", "KO"],
   ["COUPANG", "CPNG"],
+  ["CROWDSTRIKE", "CRWD"],
   ["DAKTRONICS", "DAKT"],
+  ["DATADOG", "DDOG"],
   ["DBV TECHNOLOGIES", "DBVT"],
+  ["DOORDASH", "DASH"],
   ["ECHOSTAR", "SATS"],
   ["FIGURE TECHNOLOGY", "FIGR"],
   ["KRAFT HEINZ", "KHC"],
@@ -717,6 +768,8 @@ const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
   ["LYONDELLBASELL", "LYB"],
   ["MERCADOLIBRE", "MELI"],
   ["MICRON", "MU"],
+  ["NETFLIX", "NFLX"],
+  ["NU HOLDINGS", "NU"],
   ["MOODYS", "MCO"],
   ["MOODY", "MCO"],
   ["NATERA", "NTRA"],
@@ -727,7 +780,9 @@ const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
   ["OPTION CARE", "OPCH"],
   ["PROTAGONIST", "PTGX"],
   ["PURECYCLE", "PCT"],
+  ["PALANTIR", "PLTR"],
   ["QNITY", "Q"],
+  ["ROBLOX", "RBLX"],
   ["VISA", "V"],
   ["MASTERCARD", "MA"],
   ["AMAZON", "AMZN"],
@@ -743,6 +798,8 @@ const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
   ["SANDISK", "SNDK"],
   ["SEA LTD", "SE"],
   ["SEAGATE", "STX"],
+  ["SERVICENOW", "NOW"],
+  ["SNOWFLAKE", "SNOW"],
   ["SOUTHERN COPPER", "SCCO"],
   ["STMICROELECTRONICS", "STM"],
   ["STUBHUB", "STUB"],
@@ -750,6 +807,7 @@ const COMMON_13F_ISSUER_SYMBOLS: Array<[string, string]> = [
   ["TEVA", "TEVA"],
   ["TWILIO", "TWLO"],
   ["TWIST BIOSCIENCE", "TWST"],
+  ["TRIPADVISOR", "TRIP"],
   ["UNITED AIRLS", "UAL"],
   ["UNITED AIRLINES", "UAL"],
   ["UNITY SOFTWARE", "U"],

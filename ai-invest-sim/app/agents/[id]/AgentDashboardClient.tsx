@@ -92,12 +92,15 @@ export default function AgentDashboardClient({
   )
   const [pendingRunType, setPendingRunType] =
     React.useState<AgentRun["run_type"] | null>(null)
+  const [runActionError, setRunActionError] = React.useState("")
   const [tradeDraft, setTradeDraft] = React.useState<TradeDraft | null>(null)
   const [configTab, setConfigTab] = React.useState<
     "profile" | "workflow" | null
   >(null)
   const tradeSectionRef = React.useRef<HTMLDivElement | null>(null)
   const proposalScrollerRef = React.useRef<HTMLDivElement | null>(null)
+  const committeeSectionRef = React.useRef<HTMLElement | null>(null)
+  const researchSectionRef = React.useRef<HTMLElement | null>(null)
   const baseCurrency = agent.base_currency || "USD"
   const initialMarketValue = Number(agent.initial_capital || 0)
   const followerPositionValue = Number(agent.follower_position_value || 0)
@@ -122,6 +125,26 @@ export default function AgentDashboardClient({
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       ),
     [currentTradeProposals]
+  )
+  const escalationRuns = React.useMemo(
+    () =>
+      currentRuns
+        .filter((run) => getAgentRunType(run) === "escalation")
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ),
+    [currentRuns]
+  )
+  const researchRuns = React.useMemo(
+    () =>
+      currentRuns
+        .filter((run) => getAgentRunType(run) !== "escalation")
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ),
+    [currentRuns]
   )
 
   function handleFollowChange(nextFollowing: boolean) {
@@ -162,6 +185,10 @@ export default function AgentDashboardClient({
     evaluation?: unknown
     initialization?: unknown
   }) {
+    const completedRunType =
+      payload.run && isRecord(payload.run)
+        ? readString(payload.run.run_type, "")
+        : ""
     if (payload.run) {
       setCurrentRuns((previous) => [payload.run as AgentRun, ...previous])
     }
@@ -196,12 +223,71 @@ export default function AgentDashboardClient({
 
     clearAgentDetailCache(agent.id)
     window.setTimeout(() => {
-      proposalScrollerRef.current?.scrollTo({ left: 0, behavior: "smooth" })
-      tradeSectionRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      })
+      if (payload.trade_proposal || isTradeRunType(completedRunType)) {
+        proposalScrollerRef.current?.scrollTo({ left: 0, behavior: "smooth" })
+        tradeSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      } else if (completedRunType === "escalation") {
+        committeeSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      } else {
+        researchSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      }
     }, 0)
+  }
+
+  async function requestAgentRun(runType: AgentRun["run_type"]) {
+    setPendingRunType(runType)
+    setRunActionError("")
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const token = session?.access_token
+      const res = await fetch(`/api/agents/${agent.id}/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ run_type: runType }),
+      })
+
+      let data: {
+        success?: boolean
+        error?: string
+        run?: unknown
+        trade_proposal?: unknown
+        evaluation?: unknown
+        initialization?: unknown
+      }
+
+      try {
+        data = (await res.json()) as typeof data
+      } catch {
+        throw new Error(`Run failed with status ${res.status}.`)
+      }
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Run failed with status ${res.status}.`)
+      }
+
+      handleRunCompleted(data)
+    } catch (error) {
+      setRunActionError(
+        error instanceof Error ? error.message : "Failed to run agent."
+      )
+    } finally {
+      setPendingRunType(null)
+    }
   }
 
   function loadHoldingIntoTradeForm(holding: UpdatedHolding) {
@@ -262,16 +348,29 @@ export default function AgentDashboardClient({
                 initialBuildMode={initialBuildMode}
                 agentMode={agent.agent_mode === "copycat" ? "copycat" : "ai_manager"}
                 onRunStarted={(runType) => {
+                  setRunActionError("")
                   setPendingRunType(runType)
                   window.setTimeout(() => {
-                    tradeSectionRef.current?.scrollIntoView({
-                      behavior: "smooth",
-                      block: "start",
-                    })
-                    proposalScrollerRef.current?.scrollTo({
-                      left: 0,
-                      behavior: "smooth",
-                    })
+                    if (isTradeRunType(runType)) {
+                      tradeSectionRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
+                      proposalScrollerRef.current?.scrollTo({
+                        left: 0,
+                        behavior: "smooth",
+                      })
+                    } else if (runType === "escalation") {
+                      committeeSectionRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
+                    } else {
+                      researchSectionRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
+                    }
                   }, 0)
                 }}
                 onRunCompleted={handleRunCompleted}
@@ -282,7 +381,16 @@ export default function AgentDashboardClient({
             {pendingRunType && (
               <div className="w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
                 {getRunProgressTitle(pendingRunType)} The latest result will
-                appear at the front of Trade Proposals when generation finishes.
+                appear in{" "}
+                {isTradeRunType(pendingRunType)
+                  ? "Trade Proposals"
+                  : "Recent Agent Research"}{" "}
+                when generation finishes.
+              </div>
+            )}
+            {runActionError && (
+              <div className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {runActionError}
               </div>
             )}
 
@@ -498,7 +606,56 @@ export default function AgentDashboardClient({
           />
         </div>
 
-        <section className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6">
+        {(pendingRunType === "escalation" || escalationRuns.length > 0) && (
+          <section
+            ref={committeeSectionRef}
+            className="mt-8 rounded-xl border border-red-200 bg-red-50/30 p-6"
+          >
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-600">
+                  Investment Committee
+                </p>
+                <h2 className="mt-1 text-2xl font-semibold">
+                  Escalation Review
+                </h2>
+                <p className="mt-1 max-w-4xl text-sm text-slate-500">
+                  A staged committee memo that checks mandate drift, exposure,
+                  core holdings, scenarios, macro sensitivity, stress tests, and
+                  Keep/Add/Trim/Exit guidance before any rebalance decision.
+                </p>
+              </div>
+              {escalationRuns.length > 0 && (
+                <span className="rounded-md border border-red-100 bg-white px-2 py-1 text-xs text-red-700">
+                  Latest memo
+                </span>
+              )}
+            </div>
+
+            {pendingRunType === "escalation" && (
+              <div className="mb-4">
+                <ProposalPendingCard runType={pendingRunType} />
+              </div>
+            )}
+
+            {escalationRuns.length > 0 ? (
+              <RunResearchCard
+                run={escalationRuns[0]}
+                rebalanceLoading={pendingRunType === "rebalance"}
+                onRequestRebalance={() => requestAgentRun("rebalance")}
+              />
+            ) : (
+              <p className="text-sm text-slate-500">
+                No escalation memo yet. Run Escalation to generate an investment
+                committee review.
+              </p>
+            )}
+          </section>
+        )}
+
+        <section
+          className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6"
+        >
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Trade Proposals</h2>
@@ -508,7 +665,7 @@ export default function AgentDashboardClient({
             </div>
           </div>
 
-          {pendingRunType ? (
+          {pendingRunType && isTradeRunType(pendingRunType) ? (
             <div
               ref={proposalScrollerRef}
               className="flex snap-x gap-4 overflow-x-auto pb-2"
@@ -639,7 +796,10 @@ export default function AgentDashboardClient({
           )}
         </section>
 
-        <section className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6">
+        <section
+          ref={researchSectionRef}
+          className="mt-8 rounded-xl border border-blue-200 bg-white/55 p-6"
+        >
           <div className="mb-4">
             <h2 className="text-xl font-semibold">Recent Agent Research</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -647,12 +807,30 @@ export default function AgentDashboardClient({
             </p>
           </div>
 
-          {currentRuns.length === 0 ? (
+          {pendingRunType &&
+            !isTradeRunType(pendingRunType) &&
+            pendingRunType !== "escalation" && (
+            <div className="mb-4">
+              <ProposalPendingCard runType={pendingRunType} />
+            </div>
+          )}
+
+          {researchRuns.length === 0 &&
+          !(
+            pendingRunType &&
+            !isTradeRunType(pendingRunType) &&
+            pendingRunType !== "escalation"
+          ) ? (
             <p className="text-slate-500">No agent runs yet.</p>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {currentRuns.map((run) => (
-                <RunResearchCard key={run.id} run={run} />
+            <div className="space-y-4">
+              {researchRuns.map((run) => (
+                <RunResearchCard
+                  key={run.id}
+                  run={run}
+                  rebalanceLoading={pendingRunType === "rebalance"}
+                  onRequestRebalance={() => requestAgentRun("rebalance")}
+                />
               ))}
             </div>
           )}
@@ -839,7 +1017,15 @@ function MemoryCardPreview({
   )
 }
 
-function RunResearchCard({ run }: { run: AgentRun }) {
+function RunResearchCard({
+  run,
+  onRequestRebalance,
+  rebalanceLoading,
+}: {
+  run: AgentRun
+  onRequestRebalance?: () => void
+  rebalanceLoading?: boolean
+}) {
   const recommendation = isRecord(run.recommendation) ? run.recommendation : {}
   const runType = readString(recommendation.run_type, run.run_type || "daily")
   const marketView = readString(recommendation.market_view, "")
@@ -855,6 +1041,7 @@ function RunResearchCard({ run }: { run: AgentRun }) {
   const escalation = isRecord(recommendation.escalation)
     ? recommendation.escalation
     : {}
+  const committeeReview = readCommitteeReview(recommendation.committee_review)
   const confidence = readString(recommendation.confidence, "")
   const cardTone = getRunTone(runType)
 
@@ -919,7 +1106,15 @@ function RunResearchCard({ run }: { run: AgentRun }) {
         />
       )}
 
-      {runType === "escalation" && (
+      {runType === "escalation" && committeeReview && (
+        <EscalationCommitteeReview
+          review={committeeReview}
+          onRequestRebalance={onRequestRebalance}
+          rebalanceLoading={rebalanceLoading}
+        />
+      )}
+
+      {runType === "escalation" && !committeeReview && (
         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
           <p className="mb-2 text-xs uppercase tracking-wide text-red-700">
             Escalation
@@ -980,8 +1175,8 @@ function ResearchListBlock({
         {title}
       </p>
       <ul className="space-y-1 text-sm text-slate-600">
-        {items.map((item) => (
-          <li key={item}>- {item}</li>
+        {items.map((item, index) => (
+          <li key={`${item}-${index}`}>- {item}</li>
         ))}
       </ul>
     </div>
@@ -995,6 +1190,306 @@ function ResearchMiniBlock({ label, value }: { label: string; value: string }) {
         {label}
       </p>
       <p className="text-sm leading-relaxed text-slate-600">{value}</p>
+    </div>
+  )
+}
+
+type CommitteePhase = {
+  phase: string
+  title: string
+  facts: string[]
+  judgment: string
+  confidence: string
+  risks: string[]
+  triggers: string[]
+}
+
+type CommitteeHoldingAction = {
+  symbol: string
+  action: string
+  currentWeight?: number
+  recommendedWeightChange: string
+  factBasis: string[]
+  judgment: string
+  keyRisks: string[]
+  triggerConditions: string[]
+  reviewTiming: string
+  confidence: string
+}
+
+type CommitteeStressTest = {
+  scenario: string
+  likelyImpact: string
+  vulnerableHoldings: string[]
+  mitigation: string
+}
+
+type CommitteeRebalanceRecommendation = {
+  needed: boolean
+  priority: string
+  reason: string
+  suggestedBrief: string
+  managerApprovalRequired: boolean
+}
+
+type CommitteeReview = {
+  overallVerdict: string
+  mandateStatus: string
+  executiveSummary: string
+  rebalanceRecommendation: CommitteeRebalanceRecommendation | null
+  phases: CommitteePhase[]
+  holdingActions: CommitteeHoldingAction[]
+  stressTests: CommitteeStressTest[]
+  agreements: string[]
+  disagreements: string[]
+  finalRecommendation: string
+  followUpQuestions: string[]
+}
+
+function EscalationCommitteeReview({
+  review,
+  onRequestRebalance,
+  rebalanceLoading,
+}: {
+  review: CommitteeReview
+  onRequestRebalance?: () => void
+  rebalanceLoading?: boolean
+}) {
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs uppercase tracking-wide text-amber-700">
+            Investment Committee Review
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-md border border-amber-200 bg-white px-2 py-1 text-xs capitalize text-amber-800">
+              Verdict: {review.overallVerdict || "watch"}
+            </span>
+            <span className="rounded-md border border-amber-200 bg-white px-2 py-1 text-xs capitalize text-amber-800">
+              Mandate: {review.mandateStatus || "watch"}
+            </span>
+          </div>
+        </div>
+        {review.executiveSummary && (
+          <p className="mt-2 text-sm leading-relaxed text-amber-900">
+            {review.executiveSummary}
+          </p>
+        )}
+      </div>
+
+      {review.rebalanceRecommendation && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-emerald-700">
+                Rebalance Link
+              </p>
+              <p className="mt-1 text-sm font-semibold capitalize text-slate-900">
+                {review.rebalanceRecommendation.needed
+                  ? `Recommended: ${review.rebalanceRecommendation.priority || "review"}`
+                  : "No immediate rebalance required"}
+              </p>
+              {review.rebalanceRecommendation.reason && (
+                <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
+                  {review.rebalanceRecommendation.reason}
+                </p>
+              )}
+              {review.rebalanceRecommendation.suggestedBrief && (
+                <p className="mt-2 max-w-4xl text-xs leading-relaxed text-emerald-800">
+                  Next rebalance brief:{" "}
+                  {review.rebalanceRecommendation.suggestedBrief}
+                </p>
+              )}
+            </div>
+            {review.rebalanceRecommendation.needed && onRequestRebalance && (
+              <button
+                type="button"
+                onClick={onRequestRebalance}
+                disabled={rebalanceLoading}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-200"
+              >
+                {rebalanceLoading
+                  ? "Generating..."
+                  : "Generate Rebalance Proposal"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {review.phases.length > 0 && (
+        <div className="space-y-3">
+          {review.phases.map((phase, index) => (
+            <CommitteePhaseCard
+              key={`${phase.phase || phase.title}-${index}`}
+              phase={phase}
+            />
+          ))}
+        </div>
+      )}
+
+      {review.holdingActions.length > 0 && (
+        <div className="rounded-lg border border-blue-100 bg-white/80 p-3">
+          <p className="mb-3 text-xs uppercase tracking-wide text-slate-500">
+            Keep / Add / Trim / Exit
+          </p>
+          <div className="space-y-2">
+            {review.holdingActions.slice(0, 10).map((item, index) => (
+              <div
+                key={`${item.symbol}-${item.action}-${index}`}
+                className="rounded-lg border border-blue-100 bg-blue-50/30 p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-sm font-semibold text-slate-900">
+                    {item.symbol}
+                  </span>
+                  <span
+                    className={`rounded-md border px-2 py-1 text-[11px] font-semibold uppercase ${getCommitteeActionTone(
+                      item.action
+                    )}`}
+                  >
+                    {item.action || "watchlist"}
+                  </span>
+                  {typeof item.currentWeight === "number" && (
+                    <span className="text-xs text-slate-500">
+                      {item.currentWeight}% current
+                    </span>
+                  )}
+                </div>
+                {item.recommendedWeightChange && (
+                  <p className="mt-2 text-sm font-medium text-slate-700">
+                    {item.recommendedWeightChange}
+                  </p>
+                )}
+                {item.judgment && (
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                    {item.judgment}
+                  </p>
+                )}
+                {item.triggerConditions.length > 0 && (
+                  <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                    Trigger: {item.triggerConditions.slice(0, 2).join("; ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {review.stressTests.length > 0 && (
+        <div className="rounded-lg border border-red-100 bg-red-50/50 p-3">
+          <p className="mb-3 text-xs uppercase tracking-wide text-red-700">
+            Stress Tests
+          </p>
+          <div className="space-y-2">
+            {review.stressTests.slice(0, 8).map((test, index) => (
+              <div
+                key={`${test.scenario}-${index}`}
+                className="rounded-lg border border-red-100 bg-white/75 p-3"
+              >
+                <p className="text-sm font-semibold text-slate-800">
+                  {test.scenario}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                  {test.likelyImpact}
+                </p>
+                {test.vulnerableHoldings.length > 0 && (
+                  <p className="mt-2 text-xs text-red-700">
+                    Vulnerable: {test.vulnerableHoldings.join(", ")}
+                  </p>
+                )}
+                {test.mitigation && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Mitigation: {test.mitigation}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(review.finalRecommendation ||
+        review.agreements.length > 0 ||
+        review.disagreements.length > 0 ||
+        review.followUpQuestions.length > 0) && (
+        <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
+          <p className="mb-2 text-xs uppercase tracking-wide text-slate-500">
+            Committee Conclusion
+          </p>
+          {review.finalRecommendation && (
+            <p className="text-sm font-medium text-slate-800">
+              {review.finalRecommendation}
+            </p>
+          )}
+          <div className="mt-3 space-y-3">
+            <ResearchListBlock title="Agreements" items={review.agreements} />
+            <ResearchListBlock
+              title="Disagreements"
+              items={review.disagreements}
+            />
+            <ResearchListBlock
+              title="Follow-up"
+              items={review.followUpQuestions}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CommitteePhaseCard({ phase }: { phase: CommitteePhase }) {
+  return (
+    <div className="rounded-lg border border-blue-100 bg-white/80 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-slate-500">
+            {phase.phase.replaceAll("_", " ")}
+          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">
+            {phase.title}
+          </p>
+        </div>
+        {phase.confidence && (
+          <span className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] capitalize text-blue-700">
+            {phase.confidence}
+          </span>
+        )}
+      </div>
+      {phase.facts.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] uppercase tracking-wide text-slate-500">
+            Facts
+          </p>
+          <ul className="mt-1 space-y-1 text-sm text-slate-600">
+            {phase.facts.slice(0, 4).map((fact, index) => (
+              <li key={`${fact}-${index}`}>- {fact}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {phase.judgment && (
+        <div className="mt-3 rounded-md border border-amber-100 bg-amber-50/60 p-2">
+          <p className="text-[11px] uppercase tracking-wide text-amber-700">
+            Judgment
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-amber-900">
+            {phase.judgment}
+          </p>
+        </div>
+      )}
+      {(phase.risks.length > 0 || phase.triggers.length > 0) && (
+        <div className="mt-3 space-y-2">
+          <ResearchListBlock title="Risks" items={phase.risks.slice(0, 3)} />
+          <ResearchListBlock
+            title="Triggers"
+            items={phase.triggers.slice(0, 3)}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1703,7 +2198,7 @@ function getRunProgressDescription(runType: string) {
     return "The agent is preparing a deeper research note with portfolio implications, risks, and watch-list updates."
   }
   if (runType === "escalation") {
-    return "The agent is investigating a higher-risk condition and preparing a risk-focused recommendation."
+    return "The agent is running an investment committee review: mandate drift, exposure, core holdings, scenarios, macro sensitivity, stress tests, and final Keep/Add/Trim/Exit guidance."
   }
   return "The agent is preparing a daily market and portfolio status update."
 }
@@ -1775,20 +2270,24 @@ function getRunProgressSteps(runType: string) {
   if (runType === "escalation") {
     return [
       {
-        title: "Trigger",
-        description: "Reading the escalation condition.",
+        title: "Mandate",
+        description: "Checking whether the portfolio still matches the original agent mission.",
+      },
+      {
+        title: "Exposure",
+        description: "Mapping holdings, sectors, geography, style, cash, and concentration.",
+      },
+      {
+        title: "Holdings",
+        description: "Reviewing core positions and separating facts from judgment.",
       },
       {
         title: "Stress",
-        description: "Testing risk scenarios and policy breaches.",
+        description: "Running macro, sector-cycle, and drawdown stress scenarios.",
       },
       {
-        title: "Action",
-        description: "Preparing manual or automated next steps.",
-      },
-      {
-        title: "Log",
-        description: "Saving the escalation review.",
+        title: "Committee",
+        description: "Preparing Keep/Add/Trim/Exit conclusions and monitoring triggers.",
       },
     ]
   }
@@ -2727,6 +3226,107 @@ function readObjectList(value: unknown): Array<Record<string, unknown>> {
   return value.flatMap((item) => (isRecord(item) ? [item] : []))
 }
 
+function readBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback
+}
+
+function readCommitteeReview(value: unknown): CommitteeReview | null {
+  if (!isRecord(value)) return null
+  const summary = isRecord(value.committee_summary)
+    ? value.committee_summary
+    : {}
+  const rebalanceRecommendation = isRecord(value.rebalance_recommendation)
+    ? value.rebalance_recommendation
+    : null
+
+  return {
+    overallVerdict: readString(value.overall_verdict, ""),
+    mandateStatus: readString(value.mandate_status, ""),
+    executiveSummary: readString(value.executive_summary, ""),
+    rebalanceRecommendation: rebalanceRecommendation
+      ? {
+          needed: readBoolean(rebalanceRecommendation.needed, false),
+          priority: readString(rebalanceRecommendation.priority, "monitor"),
+          reason: readString(rebalanceRecommendation.reason, ""),
+          suggestedBrief: readString(
+            rebalanceRecommendation.suggested_rebalance_brief,
+            ""
+          ),
+          managerApprovalRequired: readBoolean(
+            rebalanceRecommendation.manager_approval_required,
+            true
+          ),
+        }
+      : null,
+    phases: readObjectList(value.phases).map(readCommitteePhase),
+    holdingActions: readObjectList(value.holding_actions).map(
+      readCommitteeHoldingAction
+    ),
+    stressTests: readObjectList(value.stress_tests).map(readCommitteeStressTest),
+    agreements: readStringList(summary.agreements),
+    disagreements: readStringList(summary.disagreements),
+    finalRecommendation: readString(summary.final_recommendation, ""),
+    followUpQuestions: readStringList(summary.follow_up_questions),
+  }
+}
+
+function readCommitteePhase(value: Record<string, unknown>): CommitteePhase {
+  return {
+    phase: readString(value.phase, "review_phase"),
+    title: readString(value.title, "Committee Review Phase"),
+    facts: readStringList(value.facts),
+    judgment: readString(value.judgment, ""),
+    confidence: readString(value.confidence, ""),
+    risks: readStringList(value.risks),
+    triggers: readStringList(value.triggers),
+  }
+}
+
+function readCommitteeHoldingAction(
+  value: Record<string, unknown>
+): CommitteeHoldingAction {
+  return {
+    symbol: readString(value.symbol, "UNKNOWN"),
+    action: readString(value.action, "watchlist").toLowerCase(),
+    currentWeight: readNumber(value.current_weight),
+    recommendedWeightChange: readString(value.recommended_weight_change, ""),
+    factBasis: readStringList(value.fact_basis),
+    judgment: readString(value.judgment, ""),
+    keyRisks: readStringList(value.key_risks),
+    triggerConditions: readStringList(value.trigger_conditions),
+    reviewTiming: readString(value.review_timing, ""),
+    confidence: readString(value.confidence, ""),
+  }
+}
+
+function readCommitteeStressTest(
+  value: Record<string, unknown>
+): CommitteeStressTest {
+  return {
+    scenario: readString(value.scenario, "Stress scenario"),
+    likelyImpact: readString(value.likely_impact, ""),
+    vulnerableHoldings: readStringList(value.vulnerable_holdings),
+    mitigation: readString(value.mitigation, ""),
+  }
+}
+
+function getCommitteeActionTone(action: string) {
+  const normalized = action.toLowerCase()
+  if (normalized === "add") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700"
+  }
+  if (normalized === "trim") {
+    return "border-amber-200 bg-amber-50 text-amber-700"
+  }
+  if (normalized === "exit") {
+    return "border-red-200 bg-red-50 text-red-700"
+  }
+  if (normalized === "keep") {
+    return "border-blue-200 bg-blue-50 text-blue-700"
+  }
+  return "border-slate-200 bg-slate-50 text-slate-600"
+}
+
 function getRunTone(runType: string) {
   if (runType === "weekly") {
     return {
@@ -2753,6 +3353,15 @@ function getRunTone(runType: string) {
     card: "border-blue-200 bg-white/80",
     badge: "border-emerald-200 bg-emerald-50 text-emerald-700",
   }
+}
+
+function isTradeRunType(runType: string | null) {
+  return runType === "initial_build" || runType === "rebalance"
+}
+
+function getAgentRunType(run: AgentRun) {
+  const recommendation = isRecord(run.recommendation) ? run.recommendation : {}
+  return readString(recommendation.run_type, run.run_type || "daily")
 }
 
 function formatRunType(runType: string) {

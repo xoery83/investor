@@ -497,7 +497,16 @@ async function buildCopycatSnapshotProposal({
       asset_type: holding.asset_type || "stock",
       target_weight: roundWeight(Number(holding.weight || 0)),
     }))
-    .filter((holding) => holding.symbol && holding.target_weight > 0)
+    .filter((holding) => isTradableCopycatHolding(holding))
+
+  const unresolvedAllocation = (sourceHoldings || [])
+    .map((holding) => ({
+      symbol: String(holding.symbol || "").toUpperCase(),
+      asset_type: String(holding.asset_type || "stock").toLowerCase(),
+      target_weight: roundWeight(Number(holding.weight || 0)),
+    }))
+    .filter((holding) => !isTradableCopycatHolding(holding))
+    .reduce((sum, holding) => sum + Number(holding.target_weight || 0), 0)
 
   const allocatedWeight = targetAllocation.reduce(
     (sum, item) => sum + item.target_weight,
@@ -569,6 +578,13 @@ async function buildCopycatSnapshotProposal({
       "Copycat holdings can be delayed relative to the manager's current portfolio.",
       "Concentrated source portfolios may fail this agent's standard risk policy.",
       "Reported holdings may exclude cash, derivatives, shorts, or private positions.",
+      ...(unresolvedAllocation > 0
+        ? [
+            `${roundWeight(
+              unresolvedAllocation
+            )}% of the latest snapshot is unresolved and is held as cash until ticker mapping is reviewed.`,
+          ]
+        : []),
     ],
     key_assumptions: [
       "Latest active snapshot is the authoritative source for this run.",
@@ -577,6 +593,23 @@ async function buildCopycatSnapshotProposal({
     allocation_comment:
       "The target allocation mirrors the latest active copycat snapshot and reserves residual weight as cash when holdings do not sum to 100%.",
   }
+}
+
+function isTradableCopycatHolding(holding: {
+  symbol?: string | null
+  asset_type?: string | null
+  target_weight?: number | null
+}) {
+  const symbol = String(holding.symbol || "").toUpperCase()
+  const assetType = String(holding.asset_type || "stock").toLowerCase()
+
+  return (
+    Boolean(symbol) &&
+    Number(holding.target_weight || 0) > 0 &&
+    assetType !== "unresolved_13f" &&
+    !symbol.startsWith("CUSIP.") &&
+    !symbol.startsWith("UNRESOLVED13F.")
+  )
 }
 
 function resolveCopycatPortfolioBaseValue(

@@ -5,7 +5,7 @@ export type WebSourcePayload = {
   warnings: string[]
 }
 
-const MAX_RAW_TEXT_CHARS = 120_000
+const MAX_RAW_TEXT_CHARS = 2_000_000
 
 export async function loadWebSource({
   sourceUrl,

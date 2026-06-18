@@ -14,11 +14,13 @@ const MAX_AGENTS_PER_RUN = 25
 export async function refreshPublicAgentValuationsCron({
   supabase,
   force = false,
+  forceMarketRefresh = force,
   skipPublicationReadiness = false,
   maxAgents = MAX_AGENTS_PER_RUN,
 }: {
   supabase: SupabaseClient
   force?: boolean
+  forceMarketRefresh?: boolean
   skipPublicationReadiness?: boolean
   maxAgents?: number
 }) {
@@ -40,6 +42,7 @@ export async function refreshPublicAgentValuationsCron({
         supabase,
         agent,
         force,
+        forceMarketRefresh,
         skipPublicationReadiness,
       })
     )
@@ -52,11 +55,13 @@ async function refreshAgentValuation({
   supabase,
   agent,
   force,
+  forceMarketRefresh,
   skipPublicationReadiness,
 }: {
   supabase: SupabaseClient
   agent: Agent
   force: boolean
+  forceMarketRefresh: boolean
   skipPublicationReadiness: boolean
 }) {
   try {
@@ -116,6 +121,7 @@ async function refreshAgentValuation({
       agent,
       holdings: (holdings || []) as AgentHolding[],
       previousValuation,
+      forceMarketRefresh,
     })
 
     return {

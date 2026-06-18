@@ -12,6 +12,7 @@ type CalculateValuationInput = {
   agent: Agent
   holdings: AgentHolding[]
   previousValuation?: AgentValuation | null
+  forceMarketRefresh?: boolean
 }
 
 export type UpdatedHolding = AgentHolding & {
@@ -34,11 +35,13 @@ export async function calculateAndStoreValuation({
   agent,
   holdings,
   previousValuation,
+  forceMarketRefresh = false,
 }: CalculateValuationInput): Promise<ValuationSnapshot> {
   const refreshedHoldings = await refreshHoldingPrices(
     supabase,
     holdings,
-    normalizeCurrency(agent.base_currency)
+    normalizeCurrency(agent.base_currency),
+    forceMarketRefresh
   )
   const cashBalance = Number(agent.cash_balance || 0)
   const holdingsValue = refreshedHoldings.reduce(
@@ -202,7 +205,8 @@ function isMissingSnapshotTableError(message: string) {
 async function refreshHoldingPrices(
   supabase: SupabaseClient,
   holdings: AgentHolding[],
-  baseCurrency: string
+  baseCurrency: string,
+  forceMarketRefresh: boolean
 ): Promise<UpdatedHolding[]> {
   return Promise.all(
     holdings.map(async (holding) => {
@@ -227,10 +231,14 @@ async function refreshHoldingPrices(
       }
 
       try {
-        const quote = await getCachedPrice(supabase, holding.symbol)
+        const quote = await getCachedPrice(supabase, holding.symbol, {
+          force: forceMarketRefresh,
+        })
         const price = quote.price || Number(holding.current_price || 0)
         const currency = normalizeCurrency(quote.currency || holding.currency)
-        const fxRate = await getCachedFxRate(supabase, currency, baseCurrency)
+        const fxRate = await getCachedFxRate(supabase, currency, baseCurrency, {
+          force: forceMarketRefresh,
+        })
         const marketValueLocal = Number(holding.quantity || 0) * price
         const marketValueBase = marketValueLocal * fxRate.rate
 
